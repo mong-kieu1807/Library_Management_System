@@ -4,15 +4,15 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 
-class Reservation extends Model
+class AIChatSession extends Model
 {
     public function user()
     {
         return $this->belongsTo(User::class);
     }
 
-    public function book()
+    public function aiChatLogs()
     {
-        return $this->belongsTo(Book::class);
+        return $this->hasMany(AIChatLog::class, 'session_id');
     }
 }

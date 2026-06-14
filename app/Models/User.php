@@ -18,6 +18,85 @@ class User extends Authenticatable
      *
      * @var list<string>
      */
+    public function role()
+    {
+        return $this->belongsTo(Role::class);
+    }
+
+    public function libraryCard()
+    {
+        return $this->hasOne(LibraryCard::class);
+    }
+
+    public function borrowTransactions()
+    {
+        return $this->hasMany(BorrowTransaction::class);
+    }
+
+    public function processedBorrows()
+    {
+        return $this->hasMany(BorrowTransaction::class, 'librarian_id');
+    }
+
+    public function reservations()
+    {
+        return $this->hasMany(Reservation::class);
+    }
+
+    public function fines()
+    {
+        return $this->hasMany(Fine::class);
+    }
+
+    public function notifications()
+    {
+        return $this->hasMany(Notification::class);
+    }
+
+    public function auditLogs()
+    {
+        return $this->hasMany(AuditLog::class, 'actor_id');
+    }
+
+    public function loginLogs()
+    {
+        return $this->hasMany(LoginLog::class);
+    }
+
+    public function bookEditHistories()
+    {
+        return $this->hasMany(BookEditHistory::class, 'edited_by');
+    }
+
+    public function copyRetirements()
+    {
+        return $this->hasMany(CopyRetirement::class, 'retired_by');
+    }
+
+    public function holidays()
+    {
+        return $this->hasMany(Holiday::class, 'created_by');
+    }
+
+    public function reportExports()
+    {
+        return $this->hasMany(ReportExport::class, 'exported_by');
+    }
+
+    public function backupLogs()
+    {
+        return $this->hasMany(BackupLog::class, 'created_by');
+    }
+
+    public function aiRecommendations()
+    {
+        return $this->hasMany(AIRecommendation::class);
+    }
+
+    public function aiChatSessions()
+    {
+        return $this->hasMany(AIChatSession::class);
+    }
     protected $fillable = [
         'name',
         'email',
