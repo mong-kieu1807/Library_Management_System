@@ -3,7 +3,7 @@
 @if(!empty($users) && $users->count())
     <ul>
         @foreach($users as $user)
-            <li>{{ $user->name }} - {{ $user->email }}</li>
+            <li>{{ $user->full_name }} - {{ $user->email }}</li>
         @endforeach
     </ul>
 @endif
