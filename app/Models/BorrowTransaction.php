@@ -25,4 +25,13 @@ class BorrowTransaction extends Model
     {
         return $this->hasMany(Fine::class);
     }
+    protected $fillable = [
+    'user_id',
+    'librarian_id',
+    'borrow_date',
+    'due_date',
+    'status',
+    'created_at',
+    'updated_at'
+    ];
 }

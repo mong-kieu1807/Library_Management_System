@@ -10,4 +10,12 @@ class Notification extends Model
     {
         return $this->belongsTo(User::class);
     }
+    protected $fillable = [
+    'user_id',
+    'title',
+    'content',
+    'type',
+    'is_read',
+    'created_at'
+];
 }

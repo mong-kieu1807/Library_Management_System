@@ -25,4 +25,13 @@ class Fine extends Model
     {
         return $this->hasOne(Payment::class);
     }
+    protected $fillable = [
+    'user_id',
+    'borrow_id',
+    'copy_id',
+    'amount',
+    'reason',
+    'status',
+    'created_at'
+    ];
 }

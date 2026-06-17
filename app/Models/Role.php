@@ -10,4 +10,10 @@ class Role extends Model
     {
         return $this->hasMany(User::class);
     }
+    protected $primaryKey = 'role_id';
+    public $incrementing = true;
+    protected $fillable = [
+    'role_name',
+    'description'
+    ];
 }
