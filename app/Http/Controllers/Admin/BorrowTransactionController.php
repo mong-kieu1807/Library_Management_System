@@ -1,10 +1,12 @@
 <?php
 
-namespace App\Http\Controllers;
+namespace App\Http\Controllers\Admin;
 
 use Illuminate\Http\Request;
+use App\Http\Controllers\Controller;
 
-class BorrowController extends Controller
+
+class BorrowTransactionController extends Controller
 {
     //
 }

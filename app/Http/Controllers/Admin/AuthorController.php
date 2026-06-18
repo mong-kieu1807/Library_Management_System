@@ -1,9 +1,10 @@
 <?php
 
-namespace App\Http\Controllers;
+namespace App\Http\Controllers\Admin;
 
 use Illuminate\Http\Request;
 use App\Models\Author;
+use App\Http\Controllers\Controller;
 
 class AuthorController extends Controller
 {
@@ -13,7 +14,7 @@ class AuthorController extends Controller
     
     public function index()
     {
-        $authors = Author::all();
+        $authors = Author::where('is_active', true)->paginate(10);
         return response()->json($authors);
     }
 
@@ -30,11 +31,17 @@ class AuthorController extends Controller
      */
     public function store(Request $request)
     {
-        $author = Author::create([
-        'name' => $request->name,
-        'bio' => $request->bio
+        $validated = $request->validate([
+        'name' => ['sometimes','required','string','max:255'],
+        'bio' => ['sometimes','nullable','string'],
+        'birth_date' => ['sometimes','nullable','date'],
+        'nationality' => ['sometimes','nullable','string','max:255'],
+        'is_active' => ['sometimes','boolean']
         ]);
-        return response()->json($author, 201);
+
+    $author = Author::create($validated);
+
+    return response()->json($author,201);
     }
         
     
@@ -61,10 +68,15 @@ class AuthorController extends Controller
     public function update(Request $request, int $id)
     {
         $author = Author::findOrFail($id);
-        $author->update([
-        'name' => $request->name,
-        'bio' => $request->bio
+        $validated = $request->validate([
+        'name' => ['sometimes','required','string','max:255'],
+        'bio' => ['sometimes','nullable','string'],
+        'birth_date' => ['sometimes','nullable','date'],
+        'nationality' => ['sometimes','nullable','string','max:255'],
+        'is_active' => ['sometimes','boolean']
         ]);
+
+        $author->update($validated);
         return response()->json($author);
     }
 
@@ -74,7 +86,33 @@ class AuthorController extends Controller
     public function destroy(int $id)
     {
         $author = Author::findOrFail($id);
-        $author->delete();
-        return response()->json(null, 204);
+
+        $author->update([
+            'is_active' => false
+        ]);
+
+        return response()->json([
+            'message' => 'Ẩn tác giả thành công'
+        ]);
+    }
+    public function restore(int $id)
+    {
+        $author = Author::findOrFail($id);
+
+        $author->update([
+            'is_active' => true
+        ]);
+
+        return response()->json([
+            'message' => 'Khôi phục tác giả thành công'
+        ]);
+    }
+    public function search(Request $request)
+    {
+        return Author::where('is_active', true)->where(
+            'name',
+            'like',
+            '%' . $request->keyword . '%'
+        )->get();
     }
 }

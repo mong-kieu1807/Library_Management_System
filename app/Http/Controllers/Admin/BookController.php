@@ -7,10 +7,12 @@ use App\Models\Author;
 use App\Models\Book;
 use App\Models\BookEditHistory;
 use App\Models\Publisher;
+use Intervention\Image\Laravel\Facades\Image;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Validation\Rule;
+
 
 class BookController extends Controller
 {
@@ -75,7 +77,7 @@ class BookController extends Controller
 
     public function index()
     {
-        return Book::with(['authors', 'categories', 'publisher'])->get();
+        return Book::with(['authors', 'categories', 'publisher'])->paginate(20);
     }
 
     public function create()
@@ -91,16 +93,52 @@ class BookController extends Controller
             'publisher_id' => ['required', 'exists:publishers,publisher_id'],
             'authors' => ['nullable', 'array'],
             'authors.*' => ['integer', 'exists:authors,author_id'],
+            'publish_date' => ['nullable', 'date'],
+            'publish_year' => ['nullable', 'integer'],
+            'edition' => ['nullable', 'string', 'max:50'],
+            'language' => ['nullable', 'string', 'max:50'],
+            'pages' => ['nullable', 'integer', 'min:0'],
+            'dimensions' => ['nullable', 'string', 'max:100'],
+            'cover_type' => ['nullable', 'string', 'max:50'],
+            'description' => ['nullable', 'string'],
+            'cover_image' => ['nullable', 'image', 'max:2048'],
+            'replacement_cost' => ['nullable', 'numeric', 'min:0'],
+            'is_featured' => ['boolean'],
             'categories' => ['nullable', 'array'],
             'categories.*' => ['integer', 'exists:categories,category_id'],
         ]);
+        if ($request->hasFile('cover_image')) {
 
+            $image = Image::read($request->file('cover_image'));
+
+            // crop và resize về kích thước cố định
+            $image->cover(300, 450);
+
+            $filename = time().'.jpg';
+
+            $image->save(
+                storage_path('app/public/book-covers/'.$filename)
+            );
+
+            $validated['cover_image'] = 'book-covers/'.$filename;
+        }
         $book = DB::transaction(function () use ($validated) {
             $book = Book::create([
-                'title' => $validated['title'],
-                'isbn' => $validated['isbn'],
-                'publisher_id' => $validated['publisher_id'],
-            ]);
+            'title' => $validated['title'],
+            'isbn' => $validated['isbn'],
+            'publisher_id' => $validated['publisher_id'],
+
+            'publish_date' => $validated['publish_date'] ?? null,
+            'publish_year' => $validated['publish_year'] ?? null,
+            'edition' => $validated['edition'] ?? null,
+            'language' => $validated['language'] ?? null,
+            'pages' => $validated['pages'] ?? null,
+            'dimensions' => $validated['dimensions'] ?? null,
+            'cover_type' => $validated['cover_type'] ?? null,
+            'description' => $validated['description'] ?? null,
+            'replacement_cost' => $validated['replacement_cost'] ?? null,
+            'cover_image' => $validated['cover_image'] ?? null,
+        ]);
 
             $book->authors()->sync($validated['authors'] ?? []);
             $book->categories()->sync($validated['categories'] ?? []);
@@ -246,9 +284,15 @@ class BookController extends Controller
     public function destroy(int $id)
     {
         $book = Book::findOrFail($id);
+        if($book->bookCopies()->where('status', '=', 'borrowing')->exists()){
+            return response()->json(['message' => 'Không thể xóa sách này vì còn bản sao sách đang được mượn'], 400);
+        }
+        else if($book->bookCopies()->where('status', '=', 'reserved')->exists()){
+            return response()->json(['message' => 'Không thể xóa sách này vì còn bản sao sách đang được đặt trước'], 400);
+        }
         $book->delete();
 
-        return response()->json(['message' => 'Xoa thanh cong']);
+        return response()->json(['message' => 'Xóa thành công']);
     }
 
     private function makeHistoryRow(int $bookId, int $editedBy, string $field, mixed $oldValue, mixed $newValue, ?string $reason): array
