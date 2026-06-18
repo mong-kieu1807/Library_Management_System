@@ -2,6 +2,13 @@
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 
+Route::get('/', function () {
+    return response()->json([
+        'status' => 'OK',
+        'message' => 'Library Management System BE is running.'
+    ]);
+});
+
 Route::get('/db-test', function () {
     try {
         $pdo = DB::connection()->getPdo();
