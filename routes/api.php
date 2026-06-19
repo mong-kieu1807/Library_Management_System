@@ -17,6 +17,12 @@ Route::prefix('v1/auth')->group(function () {
 
 Route::get('v1/books/filter-options', [BookController::class, 'filterOptions']);
 Route::get('v1/books/search', [BookController::class, 'search']);
+Route::get('v1/books/home', [BookController::class, 'home']);
+Route::get('v1/books/{bookId}', [BookController::class, 'show']);
+Route::get('v1/books/{bookId}/related', [BookController::class, 'related']);
+Route::get('v1/books/{bookId}/reviews', [BookController::class, 'reviews']);
+Route::get('v1/books/{bookId}/review-permission', [BookController::class, 'reviewPermission']);
+Route::post('v1/books/{bookId}/reviews', [BookController::class, 'submitReview']);
 
 Route::get('v1/library-card/{userId}', [LibraryCardController::class, 'show']);
 
