@@ -33,72 +33,72 @@ class User extends Authenticatable
 
     public function borrowTransactions()
     {
-        return $this->hasMany(BorrowTransaction::class);
+        return $this->hasMany(BorrowTransaction::class, 'user_id', 'user_id');
     }
 
     public function processedBorrows()
     {
-        return $this->hasMany(BorrowTransaction::class, 'librarian_id');
+        return $this->hasMany(BorrowTransaction::class, 'librarian_id', 'user_id');
     }
 
     public function reservations()
     {
-        return $this->hasMany(Reservation::class);
+        return $this->hasMany(Reservation::class, 'user_id', 'user_id');
     }
 
     public function fines()
     {
-        return $this->hasMany(Fine::class);
+        return $this->hasMany(Fine::class, 'user_id', 'user_id');
     }
 
     public function notifications()
     {
-        return $this->hasMany(Notification::class);
+        return $this->hasMany(Notification::class, 'user_id', 'user_id');
     }
 
     public function auditLogs()
     {
-        return $this->hasMany(AuditLog::class, 'actor_id');
+        return $this->hasMany(AuditLog::class, 'actor_id', 'user_id');
     }
 
     public function loginLogs()
     {
-        return $this->hasMany(LoginLog::class);
+        return $this->hasMany(LoginLog::class, 'user_id', 'user_id');
     }
 
     public function bookEditHistories()
     {
-        return $this->hasMany(BookEditHistory::class, 'edited_by');
+        return $this->hasMany(BookEditHistory::class, 'edited_by', 'user_id');
     }
 
     public function copyRetirements()
     {
-        return $this->hasMany(CopyRetirement::class, 'retired_by');
+        return $this->hasMany(CopyRetirement::class, 'retired_by', 'user_id');
     }
 
     public function holidays()
     {
-        return $this->hasMany(Holiday::class, 'created_by');
+        return $this->hasMany(Holiday::class, 'created_by', 'user_id');
     }
 
     public function reportExports()
     {
-        return $this->hasMany(ReportExport::class, 'exported_by');
+        return $this->hasMany(ReportExport::class, 'exported_by', 'user_id');
     }
 
     public function backupLogs()
     {
-        return $this->hasMany(BackupLog::class, 'created_by');
+        return $this->hasMany(BackupLog::class, 'created_by', 'user_id');
     }
 
     public function aiRecommendations()
     {
-        return $this->hasMany(AIRecommendation::class);
+        return $this->hasMany(AIRecommendation::class, 'user_id', 'user_id');
     }
 
     public function aiChatSessions()
     {
-        return $this->hasMany(AIChatSession::class);
+        return $this->hasMany(AIChatSession::class, 'user_id', 'user_id');
     }
     protected $fillable = [
         'full_name',
