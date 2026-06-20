@@ -2,13 +2,13 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Auth\AuthController;
-
+use App\Http\Controllers\Admin\BookController;
 
 Route::prefix('v1/auth')->group(function () {
     Route::post('/login', [AuthController::class, 'login']);
     Route::post('/logout', [AuthController::class, 'logout']);
 });
-
+Route::get('/books/isbn/{isbn}', [BookController::class, 'fetchByISBN']);
 Route::middleware('auth:sanctum')->prefix('private/v1')->group(function () {
     Route::get('/users', [App\Http\Controllers\Admin\UserController::class, 'index']);
     Route::post('/users', [App\Http\Controllers\Admin\UserController::class, 'store']);
