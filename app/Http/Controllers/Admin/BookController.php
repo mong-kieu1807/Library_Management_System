@@ -75,9 +75,25 @@ class BookController extends Controller
         return response()->json(Book::with(['authors', 'categories', 'publisher'])->find($book->book_id));
     }
 
-    public function index()
+    public function index(Request $request)
     {
-        return Book::with(['authors', 'categories', 'publisher'])->paginate(20);
+        $q = trim($request->query('q', ''));
+        $query = Book::with(['authors', 'categories', 'publisher']);
+
+        if ($q !== '') {
+            $query->where(function ($sub) use ($q) {
+                $sub->where('title', 'like', "%{$q}%")
+                    ->orWhere('isbn', 'like', "%{$q}%")
+                    ->orWhereHas('authors', function ($authorSub) use ($q) {
+                        $authorSub->where('author_name', 'like', "%{$q}%");
+                    })
+                    ->orWhereHas('publisher', function ($pubSub) use ($q) {
+                        $pubSub->where('name', 'like', "%{$q}%");
+                    });
+            });
+        }
+
+        return $query->paginate(20);
     }
 
     public function create()
@@ -91,7 +107,7 @@ class BookController extends Controller
             'title' => ['required', 'string', 'max:255'],
             'isbn' => ['required', 'string', 'max:20', 'unique:books,isbn'],
             'publisher_id' => ['required', 'exists:publishers,publisher_id'],
-            'authors' => ['nullable', 'array'],
+            'authors' => ['required', 'array', 'min:1'],
             'authors.*' => ['integer', 'exists:authors,author_id'],
             'publish_date' => ['nullable', 'date'],
             'publish_year' => ['nullable', 'integer'],
@@ -127,6 +143,7 @@ class BookController extends Controller
             'title' => $validated['title'],
             'isbn' => $validated['isbn'],
             'publisher_id' => $validated['publisher_id'],
+            'author_id' => (int)$validated['authors'][0],
 
             'publish_date' => $validated['publish_date'] ?? null,
             'publish_year' => $validated['publish_year'] ?? null,
@@ -151,7 +168,7 @@ class BookController extends Controller
 
     public function show(int $id)
     {
-        return Book::with(['authors', 'categories', 'publisher'])->findOrFail($id);
+        return Book::with(['authors', 'categories', 'publisher', 'bookEditHistories.user'])->findOrFail($id);
     }
 
     public function edit(int $id)
@@ -245,6 +262,14 @@ class BookController extends Controller
 
             if ($oldAuthors !== $newAuthors) {
                 $changes[] = $this->makeHistoryRow($book->book_id, $editedBy, 'authors', $oldAuthors, $newAuthors, $request->input('edit_reason'));
+            }
+
+            if (!empty($validated['authors'])) {
+                $primaryAuthorId = (int)$validated['authors'][0];
+                if ($book->author_id !== $primaryAuthorId) {
+                    $updateData['author_id'] = $primaryAuthorId;
+                    $changes[] = $this->makeHistoryRow($book->book_id, $editedBy, 'author_id', $book->author_id, $primaryAuthorId, $request->input('edit_reason'));
+                }
             }
         }
 

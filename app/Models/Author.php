@@ -23,6 +23,7 @@ class Author extends Model
     'author_name',
     'bio',
     'birth_date',
-    'nationality'
+    'nationality',
+    'is_active'
     ];
 }

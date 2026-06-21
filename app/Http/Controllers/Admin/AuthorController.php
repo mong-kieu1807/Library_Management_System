@@ -39,9 +39,15 @@ class AuthorController extends Controller
         'is_active' => ['sometimes','boolean']
         ]);
 
-    $author = Author::create($validated);
+        $data = $validated;
+        if (isset($data['name'])) {
+            $data['author_name'] = $data['name'];
+            unset($data['name']);
+        }
 
-    return response()->json($author,201);
+        $author = Author::create($data);
+
+        return response()->json($author, 201);
     }
         
     
@@ -76,7 +82,13 @@ class AuthorController extends Controller
         'is_active' => ['sometimes','boolean']
         ]);
 
-        $author->update($validated);
+        $data = $validated;
+        if (isset($data['name'])) {
+            $data['author_name'] = $data['name'];
+            unset($data['name']);
+        }
+
+        $author->update($data);
         return response()->json($author);
     }
 
