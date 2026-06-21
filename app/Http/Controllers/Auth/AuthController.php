@@ -101,10 +101,10 @@ class AuthController extends Controller
         // Load the role relation
         $roleName = $user->role ? $user->role->role_name : null;
 
-        // Check if the user is an admin
-        if ($roleName !== 'admin') {
+        // Only admin and reader roles are permitted
+        if (!in_array($roleName, ['admin', 'reader', 'librarian'])) {
             return response()->json([
-                'message' => 'Bạn không có quyền truy cập vào trang quản trị.',
+                'message' => 'Bạn không có quyền truy cập.',
             ], 403);
         }
 
@@ -116,7 +116,7 @@ class AuthController extends Controller
         }
 
         // Generate Sanctum access token
-        $token = $user->createToken('admin-token')->plainTextToken;
+        $token = $user->createToken("{$roleName}-token")->plainTextToken;
 
         // Format user details for frontend IDetailUser structure
         $userData = [

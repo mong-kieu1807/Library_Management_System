@@ -5,6 +5,7 @@ use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\Auth\ForgotPasswordController;
 use App\Http\Controllers\LibraryCardController;
 use App\Http\Controllers\BookController;
+use App\Http\Controllers\BorrowingController;
 use App\Http\Controllers\ProfileController;
 
 
@@ -37,6 +38,10 @@ Route::prefix('v1/profile')->group(function () {
     Route::get('/{userId}',         [ProfileController::class, 'show']);
     Route::put('/{userId}',         [ProfileController::class, 'update']);
     Route::post('/{userId}/avatar', [ProfileController::class, 'updateAvatar']);
+});
+
+Route::middleware('auth:sanctum')->prefix('v1/me')->group(function () {
+    Route::get('/borrowing', [BorrowingController::class, 'index']);
 });
 
 Route::middleware('auth:sanctum')->prefix('private/v1')->group(function () {
