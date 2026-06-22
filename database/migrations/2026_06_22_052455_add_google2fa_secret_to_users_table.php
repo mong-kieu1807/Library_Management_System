@@ -6,13 +6,10 @@ use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
-    /**
-     * Run the migrations.
-     */
     public function up(): void
     {
         Schema::table('users', function (Blueprint $table) {
-            $table->foreign(['role_id'], 'fk_users_roles')->references(['role_id'])->on('roles')->onUpdate('restrict')->onDelete('restrict');
+            $table->string('google2fa_secret', 255)->nullable()->after('password');
         });
     }
 
@@ -22,7 +19,7 @@ return new class extends Migration
     public function down(): void
     {
         Schema::table('users', function (Blueprint $table) {
-            $table->dropForeign('fk_users_roles');
+            $table->dropColumn('google2fa_secret');
         });
     }
 };
