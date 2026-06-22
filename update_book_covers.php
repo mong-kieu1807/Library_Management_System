@@ -42,31 +42,59 @@ foreach ($books as $book) {
     echo "Đang tìm ảnh cho: \"{$book->title}\" ({$query})... ";
 
     try {
-        $response = Http::get("https://www.googleapis.com/books/v1/volumes?q=" . $query);
-        if ($response->successful()) {
-            $data = $response->json();
-            $thumbnail = null;
+        $thumbnail = null;
+        $source = '';
 
-            if (isset($data['items'][0]['volumeInfo']['imageLinks']['thumbnail'])) {
-                $thumbnail = $data['items'][0]['volumeInfo']['imageLinks']['thumbnail'];
-            } elseif (isset($data['items'][0]['volumeInfo']['imageLinks']['smallThumbnail'])) {
-                $thumbnail = $data['items'][0]['volumeInfo']['imageLinks']['smallThumbnail'];
+        // 1. Thử lấy ảnh bìa từ Open Library trước (Không cần API Key, không giới hạn rate limit)
+        $olData = null;
+        if ($isbn) {
+            $olResponse = Http::get("https://openlibrary.org/search.json?q=isbn:" . $isbn . "&limit=1");
+            if ($olResponse->successful()) {
+                $olData = $olResponse->json();
             }
-
-            if ($thumbnail) {
-                // Đổi đường dẫn http sang https để tránh lỗi bảo mật hỗn hợp (mixed content)
-                $thumbnail = str_replace('http://', 'https://', $thumbnail);
-
-                $book->cover_image = $thumbnail;
-                $book->save();
-                echo "THÀNH CÔNG (Đã cập nhật)\n";
-                $successCount++;
-            } else {
-                echo "KHÔNG TÌM THẤY ẢNH\n";
-                $failCount++;
+        }
+        
+        // Nếu tìm theo ISBN không có kết quả, thử tìm theo tiêu đề sách làm phương án dự phòng
+        if (empty($olData['docs'])) {
+            $olResponse = Http::get("https://openlibrary.org/search.json?title=" . urlencode($title) . "&limit=1");
+            if ($olResponse->successful()) {
+                $olData = $olResponse->json();
             }
+        }
+
+        if (!empty($olData['docs'][0]['cover_i'])) {
+            $thumbnail = "https://covers.openlibrary.org/b/id/" . $olData['docs'][0]['cover_i'] . "-L.jpg";
+            $source = "Open Library";
+        } elseif (!empty($olData['docs'][0]['cover_edition_key'])) {
+            $thumbnail = "https://covers.openlibrary.org/b/olid/" . $olData['docs'][0]['cover_edition_key'] . "-L.jpg";
+            $source = "Open Library";
+        }
+
+        // 2. Nếu Open Library không tìm thấy hoặc thất bại, thử Google Books API làm phương án dự phòng
+        if (!$thumbnail) {
+            $response = Http::get("https://www.googleapis.com/books/v1/volumes?q=" . $query);
+            if ($response->successful()) {
+                $data = $response->json();
+                if (isset($data['items'][0]['volumeInfo']['imageLinks']['thumbnail'])) {
+                    $thumbnail = $data['items'][0]['volumeInfo']['imageLinks']['thumbnail'];
+                    $source = "Google Books";
+                } elseif (isset($data['items'][0]['volumeInfo']['imageLinks']['smallThumbnail'])) {
+                    $thumbnail = $data['items'][0]['volumeInfo']['imageLinks']['smallThumbnail'];
+                    $source = "Google Books";
+                }
+            }
+        }
+
+        if ($thumbnail) {
+            // Đổi đường dẫn http sang https để tránh lỗi bảo mật hỗn hợp (mixed content)
+            $thumbnail = str_replace('http://', 'https://', $thumbnail);
+
+            $book->cover_image = $thumbnail;
+            $book->save();
+            echo "THÀNH CÔNG (Đã cập nhật từ {$source})\n";
+            $successCount++;
         } else {
-            echo "LỖI API (Mã phản hồi: " . $response->status() . ")\n";
+            echo "KHÔNG TÌM THẤY ẢNH\n";
             $failCount++;
         }
     } catch (\Exception $e) {
