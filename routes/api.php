@@ -21,8 +21,9 @@ Route::prefix('v1/auth')->group(function () {
 
 Route::get('v1/books/filter-options', [PublicBookController::class, 'filterOptions']);
 Route::get('v1/books/search', [PublicBookController::class, 'search']);
+Route::get('v1/books/home',   [PublicBookController::class, 'home']);
 Route::get('v1/books', [AdminBookController::class, 'index']);
-Route::get('v1/books/{bookId}', [AdminBookController::class, 'show']);
+Route::get('v1/books/{bookId}', [PublicBookController::class, 'show']);
 Route::get('v1/books/{bookId}/related', [PublicBookController::class, 'related']);
 Route::get('v1/books/{bookId}/reviews', [PublicBookController::class, 'reviews']);
 Route::get('v1/books/{bookId}/review-permission', [PublicBookController::class, 'reviewPermission']);
@@ -63,6 +64,11 @@ Route::prefix('v1/profile')->group(function () {
     Route::put('/{userId}',         [ProfileController::class, 'update']);
     Route::post('/{userId}/avatar', [ProfileController::class, 'updateAvatar']);
 });
+Route::middleware('auth:sanctum')->prefix('v1/me')->group(function () {
+    Route::get('/borrowing', [BorrowingController::class, 'index']);
+    Route::post('/borrowing/{borrowId}/renew', [BorrowingController::class, 'renew']);
+});
+
 Route::middleware(['auth:sanctum', 'role.librarian'])->prefix('private/v1')->group(function () {
     Route::get('/users', [App\Http\Controllers\Admin\UserController::class, 'index']);
     Route::post('/users', [App\Http\Controllers\Admin\UserController::class, 'store']);

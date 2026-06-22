@@ -52,6 +52,8 @@ class AuthController extends Controller
             return $user;
         });
 
+        $token = $user->createToken('reader-token')->plainTextToken;
+
         $userData = [
             'id'          => (string) $user->user_id,
             'name'        => $user->full_name,
@@ -71,7 +73,7 @@ class AuthController extends Controller
         return response()->json([
             'results' => [
                 'object' => [
-                    'accessToken' => null,
+                    'accessToken' => $token,
                     'user'        => $userData,
                 ]
             ]
