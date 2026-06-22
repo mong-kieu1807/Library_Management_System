@@ -8,10 +8,7 @@
     "require": {
         "php": "^8.2",
         "intervention/image": "^3.11",
-<<<<<<< HEAD
-=======
         "intervention/image-laravel": "^1.5",
->>>>>>> origin/main
         "laravel/framework": "^12.0",
         "laravel/sanctum": "^4.3",
         "laravel/tinker": "^2.10.1"

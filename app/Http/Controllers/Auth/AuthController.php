@@ -150,8 +150,8 @@ class AuthController extends Controller
 
         // Generate Sanctum access token
         $token = $user->createToken("{$roleName}-token")->plainTextToken;
-        // Check if user is an admin - Admin MUST use 2FA
-        if ($roleName === 'admin') {
+        // Check if user is an admin - Admin MUST use 2FA (only if the 'google2fa_secret' column exists in the database)
+        if ($roleName === 'admin' && \Illuminate\Support\Facades\Schema::hasColumn('users', 'google2fa_secret')) {
             $isSetup = empty($user->google2fa_secret);
 
             if ($isSetup) {
