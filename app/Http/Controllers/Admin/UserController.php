@@ -10,7 +10,7 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
 use Exception;
 
-class UserManagementController extends Controller
+class UserController extends Controller
 {
     /**
      * Map a User model to the front-end IDetailUser/IListUser structure.

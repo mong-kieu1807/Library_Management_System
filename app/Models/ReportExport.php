@@ -10,4 +10,15 @@ class ReportExport extends Model
     {
         return $this->belongsTo(User::class, 'exported_by');
     }
+    protected $primaryKey = 'export_id';
+    public $incrementing = true;
+    protected $fillable = [
+    'exported_by',
+    'report_type',
+    'file_name',
+    'exported_at',
+    'file_format',
+    'date_from',
+    'date_to'
+    ];
 }

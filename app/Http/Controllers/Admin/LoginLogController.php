@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\LoginLog;
 use Illuminate\Http\Request;
+use App\Http\Controllers\Controller;
+
 
 class LoginLogController extends Controller
 {

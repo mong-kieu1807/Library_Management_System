@@ -10,4 +10,12 @@ class Holiday extends Model
     {
         return $this->belongsTo(User::class, 'created_by');
     }
+    protected $fillable = [
+    'holiday_name',
+    'holiday_date',
+    'is_recurring',
+    'description',
+    'created_by',
+    'created_at'
+    ];
 }

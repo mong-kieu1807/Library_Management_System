@@ -15,4 +15,13 @@ class CopyRetirement extends Model
     {
         return $this->belongsTo(User::class, 'retired_by');
     }
+    protected $primaryKey = 'retirement_id';
+    public $incrementing = true;
+    protected $fillable = [
+    'copy_id',
+    'reason',
+    'retired_by',
+    'retired_date',
+    'note'
+    ];
 }

@@ -1,8 +1,11 @@
 <?php
 
-namespace App\Http\Controllers;
+namespace App\Http\Controllers\Admin;
 
 use Illuminate\Http\Request;
+use App\Http\Controllers\Controller;
+
+use App\Models\Category;
 
 class CategoryController extends Controller
 {
@@ -11,7 +14,8 @@ class CategoryController extends Controller
      */
     public function index()
     {
-        //
+        $categories = Category::all();
+        return response()->json($categories);
     }
 
     /**
@@ -27,38 +31,53 @@ class CategoryController extends Controller
      */
     public function store(Request $request)
     {
-        //
+        $category = Category::create([
+        'category_name' => $request->category_name,
+        'description' => $request->description,
+        'parent_id' => $request->parent_id,
+        'status' => $request->status
+        ]);
+        return response()->json($category, 201);
     }
 
     /**
      * Display the specified resource.
      */
-    public function show(string $id)
+    public function show(int $id)
     {
-        //
+        return Category::with('books')->findOrFail($id);
     }
 
     /**
      * Show the form for editing the specified resource.
      */
-    public function edit(string $id)
+    public function edit(int $id)
     {
-        //
+        return Category::findOrFail($id);
     }
 
     /**
      * Update the specified resource in storage.
      */
-    public function update(Request $request, string $id)
+    public function update(Request $request, int $id)
     {
-        //
+        $category = Category::findOrFail($id);
+        $category->update([
+        'category_name' => $request->category_name,
+        'description' => $request->description,
+        'parent_id' => $request->parent_id,
+        'status' => $request->status
+        ]);
+        return response()->json($category);
     }
 
     /**
      * Remove the specified resource from storage.
      */
-    public function destroy(string $id)
+    public function destroy(int $id)
     {
-        //
+        $category = Category::findOrFail($id);
+        $category->delete();
+        return response()->json(null, 204);
     }
 }

@@ -15,4 +15,12 @@ class AIChatSession extends Model
     {
         return $this->hasMany(AIChatLog::class, 'session_id');
     }
+    protected $primaryKey = 'session_id';
+    public $incrementing = true;
+    protected $fillable = [
+    'user_id',
+    'session_id',
+    'session_name',
+    'created_at'
+    ];
 }

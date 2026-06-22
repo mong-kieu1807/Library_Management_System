@@ -100,6 +100,7 @@ class User extends Authenticatable
     {
         return $this->hasMany(AIChatSession::class, 'user_id');
     }
+    public $incrementing = true;
     protected $fillable = [
         'full_name',
         'email',
@@ -112,7 +113,6 @@ class User extends Authenticatable
         'librarian_level',
         'google2fa_secret',
     ];
-
     /**
      * The attributes that should be hidden for serialization.
      *

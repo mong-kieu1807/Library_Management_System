@@ -10,4 +10,13 @@ class AIChatLog extends Model
     {
         return $this->belongsTo(AIChatSession::class, 'session_id');
     }
+    protected $primaryKey = 'chat_id';
+    public $incrementing = true;
+    protected $fillable = [
+    'session_id',
+    'user_message',
+    'ai_response',
+    'intent',
+    'created_at'
+    ];
 }
