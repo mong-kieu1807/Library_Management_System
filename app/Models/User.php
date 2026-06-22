@@ -28,12 +28,12 @@ class User extends Authenticatable
 
     public function libraryCard()
     {
-        return $this->hasOne(LibraryCard::class);
+        return $this->hasOne(LibraryCard::class, 'user_id');
     }
 
     public function borrowTransactions()
     {
-        return $this->hasMany(BorrowTransaction::class);
+        return $this->hasMany(BorrowTransaction::class, 'user_id');
     }
 
     public function processedBorrows()
@@ -43,17 +43,17 @@ class User extends Authenticatable
 
     public function reservations()
     {
-        return $this->hasMany(Reservation::class);
+        return $this->hasMany(Reservation::class, 'user_id');
     }
 
     public function fines()
     {
-        return $this->hasMany(Fine::class);
+        return $this->hasMany(Fine::class, 'user_id');
     }
 
     public function notifications()
     {
-        return $this->hasMany(Notification::class);
+        return $this->hasMany(Notification::class, 'user_id');
     }
 
     public function auditLogs()
@@ -63,7 +63,7 @@ class User extends Authenticatable
 
     public function loginLogs()
     {
-        return $this->hasMany(LoginLog::class);
+        return $this->hasMany(LoginLog::class, 'user_id');
     }
 
     public function bookEditHistories()
@@ -93,12 +93,12 @@ class User extends Authenticatable
 
     public function aiRecommendations()
     {
-        return $this->hasMany(AIRecommendation::class);
+        return $this->hasMany(AIRecommendation::class, 'user_id');
     }
 
     public function aiChatSessions()
     {
-        return $this->hasMany(AIChatSession::class);
+        return $this->hasMany(AIChatSession::class, 'user_id');
     }
     protected $fillable = [
         'full_name',
@@ -109,6 +109,8 @@ class User extends Authenticatable
         'role_id',
         'status',
         'avatar_url',
+        'librarian_level',
+        'google2fa_secret',
     ];
 
     /**
