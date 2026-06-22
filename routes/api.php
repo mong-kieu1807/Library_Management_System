@@ -29,7 +29,7 @@ Route::get('v1/books/{bookId}/reviews', [PublicBookController::class, 'reviews']
 Route::get('v1/books/{bookId}/review-permission', [PublicBookController::class, 'reviewPermission']);
 Route::post('v1/books/{bookId}/reviews', [PublicBookController::class, 'submitReview']);
 
-Route::middleware(['auth:sanctum', 'role.librarian'])->group(function () {
+Route::middleware(['auth:sanctum', 'role:admin,librarian'])->group(function () {
     Route::post('v1/books', [AdminBookController::class, 'store']);
     Route::get('v1/books/isbn/{isbn}', [AdminBookController::class, 'fetchByISBN']);
     Route::put('v1/books/{bookId}', [AdminBookController::class, 'update']);
@@ -64,25 +64,26 @@ Route::prefix('v1/profile')->group(function () {
     Route::put('/{userId}',         [ProfileController::class, 'update']);
     Route::post('/{userId}/avatar', [ProfileController::class, 'updateAvatar']);
 });
-Route::middleware(['auth:sanctum', 'role.librarian'])->prefix('private/v1')->group(function () {
+Route::middleware(['auth:sanctum', 'role:admin,librarian'])->prefix('private/v1')->group(function () {
     Route::get('/users', [App\Http\Controllers\Admin\UserController::class, 'index']);
     Route::post('/users', [App\Http\Controllers\Admin\UserController::class, 'store']);
     Route::get('/users/{id}', [App\Http\Controllers\Admin\UserController::class, 'show']);
     Route::patch('/users/{id}', [App\Http\Controllers\Admin\UserController::class, 'update']);
     Route::delete('/users/{id}', [App\Http\Controllers\Admin\UserController::class, 'destroy']);
     Route::post('/users/{id}/reset-password', [App\Http\Controllers\Admin\UserController::class, 'resetPassword']);
+    
+    // Librarian Management (List only for both admin and librarians)
+    Route::get('/librarians', [App\Http\Controllers\Admin\LibrarianManagementController::class, 'index']);
+
+    // Reader borrow history for both admin and librarians
+    Route::get('/readers/{id}/borrow-history', [App\Http\Controllers\Admin\ReaderManagementController::class, 'borrowHistory']);
+
+    // Access Audit Logs (Login Logs) for both admin and librarians
+    Route::get('/login-logs', [App\Http\Controllers\Admin\LoginLogController::class, 'index']);
 });
 
 Route::middleware(['auth:sanctum', 'role:admin'])->prefix('private/v1')->group(function () {
-    Route::get('/users', [App\Http\Controllers\Admin\UserManagementController::class, 'index']);
-    Route::post('/users', [App\Http\Controllers\Admin\UserManagementController::class, 'store']);
-    Route::get('/users/{id}', [App\Http\Controllers\Admin\UserManagementController::class, 'show']);
-    Route::patch('/users/{id}', [App\Http\Controllers\Admin\UserManagementController::class, 'update']);
-    Route::delete('/users/{id}', [App\Http\Controllers\Admin\UserManagementController::class, 'destroy']);
-    Route::post('/users/{id}/reset-password', [App\Http\Controllers\Admin\UserManagementController::class, 'resetPassword']);
-
-    // Librarian Management Routes
-    Route::get('/librarians', [App\Http\Controllers\Admin\LibrarianManagementController::class, 'index']);
+    // Librarian Management Routes (Write actions remain admin only)
     Route::post('/librarians', [App\Http\Controllers\Admin\LibrarianManagementController::class, 'store']);
     Route::patch('/librarians/{id}', [App\Http\Controllers\Admin\LibrarianManagementController::class, 'update']);
     Route::delete('/librarians/{id}', [App\Http\Controllers\Admin\LibrarianManagementController::class, 'destroy']);
@@ -92,10 +93,6 @@ Route::middleware(['auth:sanctum', 'role:admin'])->prefix('private/v1')->group(f
     Route::get('/readers', [App\Http\Controllers\Admin\ReaderManagementController::class, 'index']);
     Route::patch('/readers/{id}/status', [App\Http\Controllers\Admin\ReaderManagementController::class, 'toggleStatus']);
     Route::post('/readers/{id}/reset-password', [App\Http\Controllers\Admin\ReaderManagementController::class, 'resetPassword']);
-    Route::get('/readers/{id}/borrow-history', [App\Http\Controllers\Admin\ReaderManagementController::class, 'borrowHistory']);
-
-    // Access Audit Logs (Login Logs)
-    Route::get('/login-logs', [App\Http\Controllers\Admin\LoginLogController::class, 'index']);
 
     // Dashboard Routes
     Route::get('/dashboard', [App\Http\Controllers\Admin\DashboardController::class, 'getDashboardData']);

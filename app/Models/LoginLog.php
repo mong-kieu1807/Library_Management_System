@@ -24,13 +24,5 @@ class LoginLog extends Model
     {
         return $this->belongsTo(User::class, 'user_id', 'user_id');
     }
-    protected $fillable = [
-    'user_id',
-    'email_attempt',
-    'ip_address',
-    'user_agent',
-    'login_status',
-    'failure_reason',
-    'login_time'
-    ];
 }
+
