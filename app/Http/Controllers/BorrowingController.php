@@ -67,6 +67,59 @@ class BorrowingController extends Controller
     }
 
     /**
+     * GET /v1/me/borrowing/history
+     *
+     * Returns all returned borrow records for the authenticated reader
+     * (borrow_details.return_date IS NOT NULL).
+     */
+    public function history(Request $request)
+    {
+        $userId = auth()->id();
+
+        $rows = DB::table('borrow_transactions as bt')
+            ->join('borrow_details as bd', 'bd.borrow_id', '=', 'bt.borrow_id')
+            ->join('book_copies as bc', 'bc.copy_id', '=', 'bd.copy_id')
+            ->join('books as b', 'b.book_id', '=', 'bc.book_id')
+            ->where('bt.user_id', $userId)
+            ->whereNotNull('bd.return_date')
+            ->select([
+                'bt.borrow_id',
+                'bd.copy_id',
+                'b.book_id',
+                'b.title',
+                'b.cover_image',
+                DB::raw("DATE_FORMAT(bt.borrow_date, '%Y-%m-%d') as borrow_date"),
+                DB::raw("DATE_FORMAT(bt.due_date,    '%Y-%m-%d') as due_date"),
+                DB::raw("DATE_FORMAT(bd.return_date, '%Y-%m-%d') as return_date"),
+                'bt.renew_count',
+                DB::raw("GREATEST(0, DATEDIFF(bd.return_date, bt.due_date)) as days_late"),
+            ])
+            ->orderByDesc('bt.borrow_date')
+            ->get();
+
+        $data = $rows->map(function ($row) {
+            $daysLate = (int) $row->days_late;
+            return [
+                'borrow_id'     => $row->borrow_id,
+                'copy_id'       => $row->copy_id,
+                'book_id'       => $row->book_id,
+                'title'         => $row->title,
+                'cover_image'   => $row->cover_image,
+                'borrow_date'   => $row->borrow_date,
+                'due_date'      => $row->due_date,
+                'return_date'   => $row->return_date,
+                'renew_count'   => (int) $row->renew_count,
+                'days_late'     => $daysLate,
+                'return_status' => $daysLate === 0
+                    ? ['value' => 'on_time', 'label' => 'Đúng hạn']
+                    : ['value' => 'late',    'label' => 'Trễ hạn'],
+            ];
+        });
+
+        return response()->json(['data' => $data]);
+    }
+
+    /**
      * POST /v1/me/borrowing/{borrowId}/renew
      *
      * Extends due_date by 7 days. Max 2 renewals per transaction.

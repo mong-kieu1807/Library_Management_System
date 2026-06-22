@@ -67,6 +67,7 @@ Route::prefix('v1/profile')->group(function () {
 });
 Route::middleware('auth:sanctum')->prefix('v1/me')->group(function () {
     Route::get('/borrowing', [BorrowingController::class, 'index']);
+    Route::get('/borrowing/history', [BorrowingController::class, 'history']);
     Route::post('/borrowing/{borrowId}/renew', [BorrowingController::class, 'renew']);
     Route::get('/reservations', [ReservationController::class, 'index']);
     Route::delete('/reservations/{reservationId}', [ReservationController::class, 'cancel']);
