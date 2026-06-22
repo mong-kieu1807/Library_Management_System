@@ -101,10 +101,10 @@ class AuthController extends Controller
         // Load the role relation
         $roleName = $user->role ? $user->role->role_name : null;
 
-        // Check if the user is an admin
-        if ($roleName !== 'admin') {
+        // Check if the user is an admin, librarian or reader
+        if (!in_array($roleName, ['admin', 'librarian', 'reader'])) {
             return response()->json([
-                'message' => 'Bạn không có quyền truy cập vào trang quản trị.',
+                'message' => 'Bạn không có quyền truy cập.',
             ], 403);
         }
 
