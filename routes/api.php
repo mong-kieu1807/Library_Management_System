@@ -10,6 +10,7 @@ use App\Http\Controllers\BookController as PublicBookController;
 use App\Http\Controllers\Admin\BookController as AdminBookController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\ReservationController;
+use App\Http\Controllers\FineController;
 
 
 Route::prefix('v1/auth')->group(function () {
@@ -71,6 +72,7 @@ Route::middleware('auth:sanctum')->prefix('v1/me')->group(function () {
     Route::post('/borrowing/{borrowId}/renew', [BorrowingController::class, 'renew']);
     Route::get('/reservations', [ReservationController::class, 'index']);
     Route::delete('/reservations/{reservationId}', [ReservationController::class, 'cancel']);
+    Route::get('/fines', [FineController::class, 'index']);
 });
 
 Route::middleware(['auth:sanctum', 'role.librarian'])->prefix('private/v1')->group(function () {
