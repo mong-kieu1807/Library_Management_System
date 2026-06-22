@@ -100,17 +100,19 @@ class User extends Authenticatable
     {
         return $this->hasMany(AIChatSession::class, 'user_id', 'user_id');
     }
+    public $incrementing = true;
     protected $fillable = [
-        'full_name',
-        'email',
-        'password',
-        'phone',
-        'address',
-        'role_id',
-        'status',
-        'avatar_url',
+    'email',
+    'password',
+    'full_name',
+    'phone',
+    'address',
+    'role_id',
+    'status',
+    'avatar_url',
+    'created_at',
+    'updated_at'
     ];
-
     /**
      * The attributes that should be hidden for serialization.
      *

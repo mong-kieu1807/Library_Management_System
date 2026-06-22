@@ -25,4 +25,16 @@ class BookCopy extends Model
     {
         return $this->hasMany(CopyRetirement::class);
     }
+    protected $primaryKey = 'copy_id';
+    public $incrementing = true;
+    protected $fillable = [
+    'book_id',
+    'barcode',
+    'status',
+    'condition',
+    'shelf_location',
+    'acquisition_date',
+    'created_at',
+    'updated_at'
+    ];
 }
