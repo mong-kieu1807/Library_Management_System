@@ -10,4 +10,15 @@ class Publisher extends Model
     {
         return $this->hasMany(Book::class);
     }
+    protected $primaryKey = 'publisher_id';
+    public $incrementing = true;
+    protected $fillable = [
+    'name',
+    'address',
+    'phone',
+    'email',
+    'status',
+    'created_at',
+    'updated_at'
+    ];
 }

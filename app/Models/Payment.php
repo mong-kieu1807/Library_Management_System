@@ -10,4 +10,10 @@ class Payment extends Model
     {
         return $this->belongsTo(Fine::class);
     }
+    protected $fillable = [
+    'fine_id',
+    'amount',
+    'method',
+    'payment_date'
+    ];
 }
