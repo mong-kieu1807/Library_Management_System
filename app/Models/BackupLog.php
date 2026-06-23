@@ -10,4 +10,15 @@ class BackupLog extends Model
     {
         return $this->belongsTo(User::class, 'created_by');
     }
+    protected $primaryKey = 'backup_id';
+    public $incrementing = true;
+    protected $fillable = [
+    'file_name',
+    'file_size',
+    'backup_type',
+    'operation_type',
+    'created_by',
+    'status',
+    'created_at'
+    ];
 }

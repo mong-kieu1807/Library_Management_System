@@ -388,36 +388,18 @@ class BookController extends Controller
 
     public function filterOptions()
     {
-        // Only categories that have at least one book, status active
         $categories = DB::table('categories as c')
-            ->whereExists(function ($sub) {
-                $sub->select(DB::raw(1))
-                    ->from('book_categories as bc')
-                    ->whereColumn('bc.category_id', 'c.category_id');
-            })
             ->where('c.status', 1)
             ->select('c.category_id', 'c.category_name')
             ->orderBy('c.category_name')
             ->get();
 
-        // Only authors that have at least one book
         $authors = DB::table('authors as a')
-            ->whereExists(function ($sub) {
-                $sub->select(DB::raw(1))
-                    ->from('book_authors as ba')
-                    ->whereColumn('ba.author_id', 'a.author_id');
-            })
             ->select('a.author_id', 'a.author_name')
             ->orderBy('a.author_name')
             ->get();
 
-        // Only publishers that have at least one book, status active
         $publishers = DB::table('publishers as p')
-            ->whereExists(function ($sub) {
-                $sub->select(DB::raw(1))
-                    ->from('books as b')
-                    ->whereColumn('b.publisher_id', 'p.publisher_id');
-            })
             ->where('p.status', 1)
             ->select('p.publisher_id', 'p.name')
             ->orderBy('p.name')

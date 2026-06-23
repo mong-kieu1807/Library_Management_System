@@ -15,4 +15,14 @@ class AIRecommendation extends Model
     {
         return $this->belongsTo(Book::class);
     }
+    protected $primaryKey = 'recommendation_id';
+    public $incrementing = true;
+    protected $fillable = [
+    'user_id',
+    'book_id',
+    'score',
+    'reason',
+    'is_clicked',
+    'created_at'
+    ];
 }

@@ -3,7 +3,7 @@
         'name' => 'laravel/laravel',
         'pretty_version' => 'dev-main',
         'version' => 'dev-main',
-        'reference' => '85e67643a708f418b31976993b46f2043d560544',
+        'reference' => '70484987853db814c2c2c46c7a5a82695bd1eabf',
         'type' => 'project',
         'install_path' => __DIR__ . '/../../',
         'aliases' => array(),
@@ -400,6 +400,15 @@
             'aliases' => array(),
             'dev_requirement' => false,
         ),
+        'intervention/image-laravel' => array(
+            'pretty_version' => '1.5.9',
+            'version' => '1.5.9.0',
+            'reference' => 'a760b041e5133fd81509414f4955c93ffefb4a7b',
+            'type' => 'library',
+            'install_path' => __DIR__ . '/../intervention/image-laravel',
+            'aliases' => array(),
+            'dev_requirement' => false,
+        ),
         'kitloong/laravel-migrations-generator' => array(
             'pretty_version' => 'v7.4.0',
             'version' => '7.4.0.0',
@@ -427,7 +436,7 @@
         'laravel/laravel' => array(
             'pretty_version' => 'dev-main',
             'version' => 'dev-main',
-            'reference' => '85e67643a708f418b31976993b46f2043d560544',
+            'reference' => '70484987853db814c2c2c46c7a5a82695bd1eabf',
             'type' => 'project',
             'install_path' => __DIR__ . '/../../',
             'aliases' => array(),

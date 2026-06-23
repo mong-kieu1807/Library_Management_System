@@ -15,6 +15,15 @@ class AdminMiddleware
      */
     public function handle(Request $request, Closure $next): Response
     {
+        $user = $request->user();
+
+        // Check if user is logged in and is admin
+        if (!$user || !$user->role || $user->role->role_name !== 'admin') {
+            return response()->json([
+                'message' => 'Bạn không có quyền truy cập chức năng này (Yêu cầu quyền Admin).'
+            ], 403);
+        }
+
         return $next($request);
     }
 }
