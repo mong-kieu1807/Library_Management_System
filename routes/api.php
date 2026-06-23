@@ -12,6 +12,7 @@ use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\ReservationController;
 use App\Http\Controllers\FineController;
 use App\Http\Controllers\WishlistController;
+use App\Http\Controllers\Admin\BorrowTransactionController;
 
 
 Route::prefix('v1/auth')->group(function () {
@@ -97,6 +98,13 @@ Route::middleware(['auth:sanctum', 'role:admin,librarian'])->prefix('private/v1'
 
     // Access Audit Logs (Login Logs) for both admin and librarians
     Route::get('/login-logs', [App\Http\Controllers\Admin\LoginLogController::class, 'index']);
+
+    // Book Checkout (Check-out)
+    Route::prefix('checkout')->group(function () {
+        Route::get('/find-reader',    [BorrowTransactionController::class, 'findReader']);
+        Route::get('/copy/{barcode}', [BorrowTransactionController::class, 'validateCopy']);
+        Route::post('/',              [BorrowTransactionController::class, 'store']);
+    });
 });
 
 Route::middleware(['auth:sanctum', 'role:admin'])->prefix('private/v1')->group(function () {
