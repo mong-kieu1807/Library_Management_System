@@ -4,114 +4,84 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use App\Models\Reservation;
+
 
 class ReservationController extends Controller
 {
-    public function reserveBook(Request $request)
+    public function cancel(Request $request, int $reservationId)
     {
-        $request->validate([
-            'user_id' => 'required',
-            'book_id' => 'required'
-        ]);
+        $userId = auth()->id();
 
-        $userId = $request->user_id;
-        $bookId = $request->book_id;
-
-        // Kiểm tra còn sách không
-        $availableCopies = DB::table('book_copies')
-            ->where('book_id', $bookId)
-            ->where('status', 'available')
-            ->count();
-
-        if ($availableCopies > 0) {
-            return response()->json([
-                'message' => 'Sách vẫn còn bản sao khả dụng, không cần đặt trước.'
-            ], 400);
-        }
-
-        // Kiểm tra đã đặt trước chưa
-        $existing = Reservation::where('user_id', $userId)
-            ->where('book_id', $bookId)
-            ->whereIn('status', ['waiting', 'notified'])
+        $reservation = DB::table('reservations')
+            ->where('reservation_id', $reservationId)
+            ->where('user_id', $userId)
             ->first();
 
-        if ($existing) {
-            return response()->json([
-                'message' => 'Bạn đã đặt trước sách này.'
-            ], 400);
+        if (!$reservation) {
+            return response()->json(['message' => 'Không tìm thấy đặt trước.'], 404);
         }
 
-        // Lấy vị trí cuối hàng chờ
-        $lastPosition = Reservation::where('book_id', $bookId)
-            ->max('queue_position');
+        if ($reservation->status !== 'waiting') {
+            return response()->json(['message' => 'Chỉ có thể hủy đặt trước đang ở trạng thái chờ.'], 422);
+        }
 
-        $queuePosition = ($lastPosition ?? 0) + 1;
+        DB::transaction(function () use ($reservation) {
+            DB::table('reservations')
+                ->where('reservation_id', $reservation->reservation_id)
+                ->update(['status' => 'cancelled']);
 
-        $reservation = Reservation::create([
-            'user_id' => $userId,
-            'book_id' => $bookId,
-            'queue_position' => $queuePosition,
-            'status' => 'waiting',
-            'created_at' => now()
-        ]);
+            DB::table('reservations')
+                ->where('book_id', $reservation->book_id)
+                ->where('status', 'waiting')
+                ->where('queue_position', '>', $reservation->queue_position)
+                ->decrement('queue_position');
+        });
 
-        return response()->json([
-            'message' => 'Đặt trước thành công',
-            'queue_position' => $queuePosition,
-            'reservation' => $reservation
-        ]);
+        return response()->json(['message' => 'Hủy đặt trước thành công.']);
     }
 
-        public function getUserReservations($userId)
-        {
-         $reservations = Reservation::join(
-                'books',
-                'reservations.book_id',
-                '=',
-                'books.book_id'
-            )
-            ->where('reservations.user_id', $userId)
-            ->select(
-                'reservations.reservation_id',
-                'books.title',
-                'reservations.queue_position',
-                'reservations.status',
-                'reservations.created_at'
-            )
-            ->orderBy('reservations.created_at', 'desc')
+    public function index(Request $request)
+    {
+        $userId = auth()->id();
+
+        $rows = DB::table('reservations as r')
+            ->join('books as b', 'b.book_id', '=', 'r.book_id')
+            ->where('r.user_id', $userId)
+            ->select([
+                'r.reservation_id',
+                'r.book_id',
+                'b.title',
+                'b.cover_image',
+                'b.avg_rating',
+                DB::raw("(SELECT GROUP_CONCAT(a.author_name ORDER BY a.author_name SEPARATOR ', ')
+                          FROM authors a
+                          JOIN book_authors ba ON ba.author_id = a.author_id
+                          WHERE ba.book_id = r.book_id) as author_name"),
+                DB::raw("(SELECT c.category_name
+                          FROM categories c
+                          JOIN book_categories bc ON bc.category_id = c.category_id
+                          WHERE bc.book_id = r.book_id
+                          LIMIT 1) as category_name"),
+                DB::raw("(SELECT COUNT(*)
+                          FROM reservations
+                          WHERE book_id = r.book_id
+                          AND status IN ('waiting', 'ready')) as total_queue"),
+                DB::raw("DATE_FORMAT(r.created_at, '%Y-%m-%d') as reserved_at"),
+                'r.status',
+                'r.queue_position',
+                DB::raw("DATE_FORMAT(r.notified_at, '%Y-%m-%d') as notified_at"),
+                DB::raw("DATE_FORMAT(r.expired_at, '%Y-%m-%d') as expired_at"),
+            ])
+            ->orderByDesc('r.created_at')
             ->get();
 
-        return response()->json($reservations);
-    }
+        $data = $rows->map(function ($row) {
+            $row->avg_rating    = (float) $row->avg_rating;
+            $row->total_queue   = (int)   $row->total_queue;
+            $row->queue_position = (int)  $row->queue_position;
+            return $row;
+        });
 
-
-
-    public function cancelReservation($reservationId)
-    {
-        $reservation = Reservation::find($reservationId);
-
-        if (!$reservation) {
-            return response()->json([
-                'message' => 'Không tìm thấy đặt trước'
-            ], 404);
-        }
-
-        $bookId = $reservation->book_id;
-        $queuePosition = $reservation->queue_position;
-
-        // Hủy đặt trước
-        $reservation->status = 'cancelled';
-        $reservation->save();
-
-        // Cập nhật lại hàng chờ
-        Reservation::where('book_id', $bookId)
-            ->where('queue_position', '>', $queuePosition)
-            ->whereIn('status', ['waiting', 'notified'])
-            ->decrement('queue_position');
-
-        return response()->json([
-            'message' => 'Hủy đặt trước thành công'
-        ]);
+        return response()->json(['data' => $data]);
     }
 }
