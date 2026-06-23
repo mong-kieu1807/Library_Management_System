@@ -11,6 +11,7 @@ use App\Http\Controllers\Admin\BookController as AdminBookController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\ReservationController;
 use App\Http\Controllers\FineController;
+use App\Http\Controllers\WishlistController;
 
 
 Route::prefix('v1/auth')->group(function () {
@@ -73,6 +74,10 @@ Route::middleware('auth:sanctum')->prefix('v1/me')->group(function () {
     Route::get('/reservations', [ReservationController::class, 'index']);
     Route::delete('/reservations/{reservationId}', [ReservationController::class, 'cancel']);
     Route::get('/fines', [FineController::class, 'index']);
+    Route::get('/wishlist',                 [WishlistController::class, 'index']);
+    Route::post('/wishlist',                [WishlistController::class, 'store']);
+    Route::patch('/wishlist/{wishlistId}',  [WishlistController::class, 'update']);
+    Route::delete('/wishlist/{wishlistId}', [WishlistController::class, 'destroy']);
 });
 
 Route::middleware(['auth:sanctum', 'role.librarian'])->prefix('private/v1')->group(function () {
