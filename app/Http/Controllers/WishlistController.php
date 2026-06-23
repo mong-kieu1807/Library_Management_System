@@ -94,19 +94,22 @@ class WishlistController extends Controller
             'note'    => 'nullable|string|max:1000',
         ]);
 
+        $dbListType = self::STATUS_TO_DB[$validated['status']];
+
         $existing = DB::table('wishlists')
             ->where('user_id', $userId)
             ->where('book_id', $validated['book_id'])
+            ->where('list_type', $dbListType)
             ->first();
 
         if ($existing) {
-            return response()->json(['message' => 'Sách đã có trong danh sách đọc.'], 409);
+            return response()->json(['message' => 'Sách đã có trong danh sách này.'], 409);
         }
 
         $wishlistId = DB::table('wishlists')->insertGetId([
             'user_id'    => $userId,
             'book_id'    => $validated['book_id'],
-            'list_type'  => self::STATUS_TO_DB[$validated['status']],
+            'list_type'  => $dbListType,
             'note'       => $validated['note'] ?? null,
             'is_public'  => false,
             'created_at' => now(),
