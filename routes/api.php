@@ -17,6 +17,7 @@ use App\Http\Controllers\WishlistController;
 Route::prefix('v1/auth')->group(function () {
     Route::post('/register', [AuthController::class, 'register']);
     Route::post('/login', [AuthController::class, 'login']);
+    Route::post('/verify-2fa', [AuthController::class, 'verify2fa'])->middleware('auth:sanctum');
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::post('/forgot-password', [ForgotPasswordController::class, 'sendResetLink']);
     Route::post('/reset-password', [ForgotPasswordController::class, 'resetPassword']);
@@ -32,7 +33,7 @@ Route::get('v1/books/{bookId}/reviews', [PublicBookController::class, 'reviews']
 Route::get('v1/books/{bookId}/review-permission', [PublicBookController::class, 'reviewPermission']);
 Route::post('v1/books/{bookId}/reviews', [PublicBookController::class, 'submitReview']);
 
-Route::middleware(['auth:sanctum', 'role.librarian'])->group(function () {
+Route::middleware(['auth:sanctum', 'role:admin,librarian'])->group(function () {
     Route::post('v1/books', [AdminBookController::class, 'store']);
     Route::get('v1/books/isbn/{isbn}', [AdminBookController::class, 'fetchByISBN']);
     Route::put('v1/books/{bookId}', [AdminBookController::class, 'update']);
@@ -80,11 +81,37 @@ Route::middleware('auth:sanctum')->prefix('v1/me')->group(function () {
     Route::delete('/wishlist/{wishlistId}', [WishlistController::class, 'destroy']);
 });
 
-Route::middleware(['auth:sanctum', 'role.librarian'])->prefix('private/v1')->group(function () {
+Route::middleware(['auth:sanctum', 'role:admin,librarian'])->prefix('private/v1')->group(function () {
     Route::get('/users', [App\Http\Controllers\Admin\UserController::class, 'index']);
     Route::post('/users', [App\Http\Controllers\Admin\UserController::class, 'store']);
     Route::get('/users/{id}', [App\Http\Controllers\Admin\UserController::class, 'show']);
     Route::patch('/users/{id}', [App\Http\Controllers\Admin\UserController::class, 'update']);
     Route::delete('/users/{id}', [App\Http\Controllers\Admin\UserController::class, 'destroy']);
     Route::post('/users/{id}/reset-password', [App\Http\Controllers\Admin\UserController::class, 'resetPassword']);
+    
+    // Librarian Management (List only for both admin and librarians)
+    Route::get('/librarians', [App\Http\Controllers\Admin\LibrarianManagementController::class, 'index']);
+
+    // Reader borrow history for both admin and librarians
+    Route::get('/readers/{id}/borrow-history', [App\Http\Controllers\Admin\ReaderManagementController::class, 'borrowHistory']);
+
+    // Access Audit Logs (Login Logs) for both admin and librarians
+    Route::get('/login-logs', [App\Http\Controllers\Admin\LoginLogController::class, 'index']);
+});
+
+Route::middleware(['auth:sanctum', 'role:admin'])->prefix('private/v1')->group(function () {
+    // Librarian Management Routes (Write actions remain admin only)
+    Route::post('/librarians', [App\Http\Controllers\Admin\LibrarianManagementController::class, 'store']);
+    Route::patch('/librarians/{id}', [App\Http\Controllers\Admin\LibrarianManagementController::class, 'update']);
+    Route::delete('/librarians/{id}', [App\Http\Controllers\Admin\LibrarianManagementController::class, 'destroy']);
+    Route::post('/librarians/{id}/reset-password', [App\Http\Controllers\Admin\LibrarianManagementController::class, 'resetPassword']);
+
+    // Reader Management Routes
+    Route::get('/readers', [App\Http\Controllers\Admin\ReaderManagementController::class, 'index']);
+    Route::patch('/readers/{id}/status', [App\Http\Controllers\Admin\ReaderManagementController::class, 'toggleStatus']);
+    Route::post('/readers/{id}/reset-password', [App\Http\Controllers\Admin\ReaderManagementController::class, 'resetPassword']);
+
+    // Dashboard Routes
+    Route::get('/dashboard', [App\Http\Controllers\Admin\DashboardController::class, 'getDashboardData']);
+    Route::get('/dashboard/recent-activities', [App\Http\Controllers\Admin\DashboardController::class, 'getRecentActivities']);
 });

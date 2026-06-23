@@ -12,12 +12,8 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        $middleware->append(\Illuminate\Http\Middleware\HandleCors::class);
-        
         $middleware->alias([
-            'role.admin' => \App\Http\Middleware\AdminMiddleware::class,
-            'role.librarian' => \App\Http\Middleware\LibrarianMiddleware::class,
-            'role.reader' => \App\Http\Middleware\ReaderMiddleware::class,
+            'role' => \App\Http\Middleware\RoleMiddleware::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

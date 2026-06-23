@@ -6,15 +6,10 @@ use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
-    /**
-     * Run the migrations.
-     */
     public function up(): void
     {
-        Schema::create('roles', function (Blueprint $table) {
-            $table->integer('role_id', true);
-            $table->string('role_name', 50)->unique('role_name');
-            $table->string('description', 255)->nullable();
+        Schema::table('users', function (Blueprint $table) {
+            $table->string('librarian_level', 50)->nullable()->after('role_id'); // 'head', 'assistant', 'view_only'
         });
     }
 
@@ -23,6 +18,8 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('roles');
+        Schema::table('users', function (Blueprint $table) {
+            $table->dropColumn('librarian_level');
+        });
     }
 };
