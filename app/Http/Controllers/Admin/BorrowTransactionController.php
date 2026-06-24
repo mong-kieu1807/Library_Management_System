@@ -129,6 +129,59 @@ class BorrowTransactionController extends Controller
     }
 
     /**
+     * GET /private/v1/checkout/available-copies?q={query}
+     *
+     * Tìm kiếm bản sao sách khả dụng theo tên sách, barcode, hoặc ISBN.
+     * Dùng cho autocomplete ô quét barcode khi thủ thư không biết barcode chính xác.
+     */
+    public function searchAvailableCopies(Request $request)
+    {
+        $q = trim($request->input('q', ''));
+        if (mb_strlen($q) < 1) {
+            return response()->json(['code' => 200, 'results' => ['objects' => []]]);
+        }
+
+        $copies = DB::table('book_copies as bc')
+            ->join('books as b', 'b.book_id', '=', 'bc.book_id')
+            ->leftJoin('book_authors as ba', 'ba.book_id', '=', 'b.book_id')
+            ->leftJoin('authors as a', 'a.author_id', '=', 'ba.author_id')
+            ->where('bc.status', 'available')
+            ->whereNotExists(function ($sub) {
+                $sub->select(DB::raw(1))
+                    ->from('borrow_details as bd')
+                    ->whereColumn('bd.copy_id', 'bc.copy_id')
+                    ->whereNull('bd.return_date');
+            })
+            ->where(function ($w) use ($q) {
+                $w->where('bc.barcode', 'LIKE', '%' . $q . '%')
+                  ->orWhere('b.title', 'LIKE', '%' . $q . '%')
+                  ->orWhere('b.isbn', 'LIKE', '%' . $q . '%');
+            })
+            ->select([
+                'bc.copy_id',
+                'bc.barcode',
+                'bc.condition',
+                'b.book_id',
+                'b.title',
+                DB::raw("COALESCE(a.author_name, '') as author_name"),
+            ])
+            ->groupBy('bc.copy_id', 'bc.barcode', 'bc.condition', 'b.book_id', 'b.title', 'a.author_name')
+            ->orderBy('b.title')
+            ->limit(10)
+            ->get()
+            ->map(fn($r) => [
+                'copy_id'   => $r->copy_id,
+                'barcode'   => $r->barcode,
+                'condition' => $r->condition,
+                'book_id'   => $r->book_id,
+                'title'     => $r->title,
+                'author'    => $r->author_name,
+            ]);
+
+        return response()->json(['code' => 200, 'results' => ['objects' => $copies]]);
+    }
+
+    /**
      * GET /private/v1/checkout/copy/{barcode}
      *
      * Kiểm tra bản sao sách có thể mượn được không.
