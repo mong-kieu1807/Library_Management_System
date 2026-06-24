@@ -14,4 +14,11 @@ class RecommendationController extends Controller
 
         return response()->json(['data' => $data]);
     }
+
+    public function collaborative()
+    {
+        $data = $this->service->collaborativeForUser(auth()->id());
+
+        return response()->json(['data' => $data]);
+    }
 }

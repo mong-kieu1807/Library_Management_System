@@ -80,7 +80,8 @@ Route::middleware('auth:sanctum')->prefix('v1/me')->group(function () {
     Route::post('/wishlist',                [WishlistController::class, 'store']);
     Route::patch('/wishlist/{wishlistId}',  [WishlistController::class, 'update']);
     Route::delete('/wishlist/{wishlistId}', [WishlistController::class, 'destroy']);
-    Route::get('/recommendations',          [RecommendationController::class, 'index']);
+    Route::get('/recommendations',                   [RecommendationController::class, 'index']);
+    Route::get('/recommendations/collaborative',     [RecommendationController::class, 'collaborative']);
 });
 
 Route::middleware(['auth:sanctum', 'role:admin,librarian'])->prefix('private/v1')->group(function () {
