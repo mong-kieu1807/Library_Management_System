@@ -28,7 +28,7 @@ class BorrowTransactionController extends Controller
 
         // Đọc hạn mức từ system_settings (ưu tiên), dùng sau trong vòng map
         $systemBorrowLimit = DB::table('system_settings')
-            ->where('config_key', 'max_borrow_books')
+            ->where('config_key', 'max_books_per_user')
             ->value('config_value');
 
         // Query 2: readers — borrowing_count và unpaid_fines đưa vào subquery
@@ -274,18 +274,18 @@ class BorrowTransactionController extends Controller
     {
         // [1] Đọc config — 1 query
         $settings = DB::table('system_settings')
-            ->whereIn('config_key', ['borrow_days', 'max_borrow_books'])
+            ->whereIn('config_key', ['max_borrow_days', 'max_books_per_user'])
             ->pluck('config_value', 'config_key');
 
-        if (!isset($settings['borrow_days'], $settings['max_borrow_books'])) {
+        if (!isset($settings['max_borrow_days'], $settings['max_books_per_user'])) {
             return response()->json([
                 'code'    => 500,
                 'message' => 'Cấu hình hệ thống chưa đầy đủ. Vui lòng kiểm tra system_settings.',
             ], 500);
         }
 
-        $borrowDays  = (int) $settings['borrow_days'];
-        $borrowLimit = (int) $settings['max_borrow_books'];
+        $borrowDays  = (int) $settings['max_borrow_days'];
+        $borrowLimit = (int) $settings['max_books_per_user'];
         $userId      = (int) $request->user_id;
         $copyIds     = $request->copy_ids;
         $today       = now()->toDateString();

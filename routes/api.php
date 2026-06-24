@@ -125,6 +125,9 @@ Route::middleware(['auth:sanctum', 'role:admin,librarian'])->prefix('private/v1'
     // User history (read-only aggregation)
     Route::get('/users/{user_id}/history', [HistoryController::class, 'getUserHistory']);
 
+    // Transaction log — Lịch sử giao dịch
+    Route::get('/transactions/log', [HistoryController::class, 'getTransactionLog']);
+
     // Dashboard Analytics (admin + librarian access)
     Route::get('/dashboard/summary',   [App\Http\Controllers\Admin\DashboardController::class, 'getSummary']);
     Route::get('/dashboard/borrows',   [App\Http\Controllers\Admin\DashboardController::class, 'getBorrowStats']);
