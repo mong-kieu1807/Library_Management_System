@@ -12,6 +12,7 @@ use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\ReservationController;
 use App\Http\Controllers\FineController;
 use App\Http\Controllers\WishlistController;
+use App\Http\Controllers\RecommendationController;
 
 
 Route::prefix('v1/auth')->group(function () {
@@ -79,6 +80,7 @@ Route::middleware('auth:sanctum')->prefix('v1/me')->group(function () {
     Route::post('/wishlist',                [WishlistController::class, 'store']);
     Route::patch('/wishlist/{wishlistId}',  [WishlistController::class, 'update']);
     Route::delete('/wishlist/{wishlistId}', [WishlistController::class, 'destroy']);
+    Route::get('/recommendations',          [RecommendationController::class, 'index']);
 });
 
 Route::middleware(['auth:sanctum', 'role:admin,librarian'])->prefix('private/v1')->group(function () {
