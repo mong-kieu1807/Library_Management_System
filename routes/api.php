@@ -14,7 +14,6 @@ use App\Http\Controllers\FineController;
 use App\Http\Controllers\WishlistController;
 use App\Http\Controllers\RecommendationController;
 
-
 Route::prefix('v1/auth')->group(function () {
     Route::post('/register', [AuthController::class, 'register']);
     Route::post('/login', [AuthController::class, 'login']);
@@ -23,6 +22,8 @@ Route::prefix('v1/auth')->group(function () {
     Route::post('/forgot-password', [ForgotPasswordController::class, 'sendResetLink']);
     Route::post('/reset-password', [ForgotPasswordController::class, 'resetPassword']);
 });
+
+Route::get('v1/public/shared/favorites/{token}', [WishlistController::class, 'publicView']);
 
 Route::get('v1/books/filter-options', [PublicBookController::class, 'filterOptions']);
 Route::get('v1/books/search', [PublicBookController::class, 'search']);
@@ -82,6 +83,7 @@ Route::middleware('auth:sanctum')->prefix('v1/me')->group(function () {
     Route::delete('/wishlist/{wishlistId}', [WishlistController::class, 'destroy']);
     Route::get('/recommendations',                   [RecommendationController::class, 'index']);
     Route::get('/recommendations/collaborative',     [RecommendationController::class, 'collaborative']);
+    Route::post('/favorites/share',                  [WishlistController::class, 'share']);
 });
 
 Route::middleware(['auth:sanctum', 'role:admin,librarian'])->prefix('private/v1')->group(function () {
