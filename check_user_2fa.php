@@ -8,7 +8,7 @@ $kernel->handle($request = \Illuminate\Http\Request::capture());
 use App\Models\User;
 use App\Helpers\Google2FA;
 
-$email = '0306231409@caothang.edu.vn';
+$email = $argv[1] ?? '0306231409@caothang.edu.vn';
 $user = User::where('email', $email)->first();
 
 if (!$user) {
