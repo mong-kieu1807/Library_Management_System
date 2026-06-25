@@ -10,3 +10,8 @@ Artisan::command('inspire', function () {
 
 // Hết hạn phiếu đặt trước mỗi ngày lúc 00:05
 Schedule::command('reservations:expire')->dailyAt('00:05');
+Schedule::command('app:send-due-reminder3-days')->dailyAt('08:00');
+Schedule::command('books:remind-3days')->dailyAt('08:00');
+Schedule::command('books:remind-1day')->dailyAt('08:00');
+
+Schedule::command('books:overdue-reminder')->dailyAt('08:10');
