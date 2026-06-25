@@ -129,6 +129,8 @@ Route::middleware(['auth:sanctum', 'role:admin,librarian'])->prefix('private/v1'
         Route::post('/',              [BorrowTransactionController::class, 'store']);
         Route::get('/renew-list',     [RenewController::class, 'getRenewList']);
         Route::post('/renew',         [RenewController::class, 'renewBook']);
+        // PDF receipt — resource-first route (new pattern, backward compat)
+        Route::get('/{borrow_id}/receipt', [ReceiptController::class, 'checkoutReceipt']);
     });
 
     // Book Return (Check-in)
@@ -137,6 +139,8 @@ Route::middleware(['auth:sanctum', 'role:admin,librarian'])->prefix('private/v1'
         Route::get('/borrowed-books/{user_id}', [ReturnController::class, 'getBorrowedBooks']);
         Route::get('/validate/{barcode}',       [ReturnController::class, 'validateReturnCopy']);
         Route::post('/confirm',                 [ReturnController::class, 'confirmReturn']);
+        // PDF receipt — resource-first route (new pattern, backward compat)
+        Route::get('/{borrow_id}/receipt',      [ReceiptController::class, 'returnReceipt']);
     });
 
     // User history (read-only aggregation)
