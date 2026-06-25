@@ -6,6 +6,7 @@ $vendorDir = dirname(__DIR__);
 $baseDir = dirname($vendorDir);
 
 return array(
+    'App\\Console\\Commands\\ExpireReservations' => $baseDir . '/app/Console/Commands/ExpireReservations.php',
     'App\\Events\\BookBorrowed' => $baseDir . '/app/Events/BookBorrowed.php',
     'App\\Events\\BookReturned' => $baseDir . '/app/Events/BookReturned.php',
     'App\\Events\\FineCreated' => $baseDir . '/app/Events/FineCreated.php',
@@ -33,8 +34,10 @@ return array(
     'App\\Http\\Controllers\\Admin\\PaymentController' => $baseDir . '/app/Http/Controllers/Admin/PaymentController.php',
     'App\\Http\\Controllers\\Admin\\PublisherController' => $baseDir . '/app/Http/Controllers/Admin/PublisherController.php',
     'App\\Http\\Controllers\\Admin\\ReaderManagementController' => $baseDir . '/app/Http/Controllers/Admin/ReaderManagementController.php',
+    'App\\Http\\Controllers\\Admin\\RenewController' => $baseDir . '/app/Http/Controllers/Admin/RenewController.php',
     'App\\Http\\Controllers\\Admin\\ReportController' => $baseDir . '/app/Http/Controllers/Admin/ReportController.php',
     'App\\Http\\Controllers\\Admin\\ReservationController' => $baseDir . '/app/Http/Controllers/Admin/ReservationController.php',
+    'App\\Http\\Controllers\\Admin\\ReturnController' => $baseDir . '/app/Http/Controllers/Admin/ReturnController.php',
     'App\\Http\\Controllers\\Admin\\RoleController' => $baseDir . '/app/Http/Controllers/Admin/RoleController.php',
     'App\\Http\\Controllers\\Admin\\SystemSettingController' => $baseDir . '/app/Http/Controllers/Admin/SystemSettingController.php',
     'App\\Http\\Controllers\\Admin\\UserController' => $baseDir . '/app/Http/Controllers/Admin/UserController.php',
@@ -58,6 +61,9 @@ return array(
     'App\\Http\\Middleware\\ReaderMiddleware' => $baseDir . '/app/Http/Middleware/ReaderMiddleware.php',
     'App\\Http\\Middleware\\RoleMiddleware' => $baseDir . '/app/Http/Middleware/RoleMiddleware.php',
     'App\\Http\\Requests\\BorrowBookRequest' => $baseDir . '/app/Http/Requests/BorrowBookRequest.php',
+    'App\\Http\\Requests\\ConfirmReservationRequest' => $baseDir . '/app/Http/Requests/ConfirmReservationRequest.php',
+    'App\\Http\\Requests\\CreateReservationRequest' => $baseDir . '/app/Http/Requests/CreateReservationRequest.php',
+    'App\\Http\\Requests\\RenewBookRequest' => $baseDir . '/app/Http/Requests/RenewBookRequest.php',
     'App\\Http\\Requests\\ReturnBookRequest' => $baseDir . '/app/Http/Requests/ReturnBookRequest.php',
     'App\\Http\\Requests\\StoreBookRequest' => $baseDir . '/app/Http/Requests/StoreBookRequest.php',
     'App\\Http\\Requests\\StoreUserRequest' => $baseDir . '/app/Http/Requests/StoreUserRequest.php',

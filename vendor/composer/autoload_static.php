@@ -671,6 +671,7 @@ class ComposerStaticInit53b5d56b3b7e3cbac1713e68c8850f6c
     );
 
     public static $classMap = array (
+        'App\\Console\\Commands\\ExpireReservations' => __DIR__ . '/../..' . '/app/Console/Commands/ExpireReservations.php',
         'App\\Events\\BookBorrowed' => __DIR__ . '/../..' . '/app/Events/BookBorrowed.php',
         'App\\Events\\BookReturned' => __DIR__ . '/../..' . '/app/Events/BookReturned.php',
         'App\\Events\\FineCreated' => __DIR__ . '/../..' . '/app/Events/FineCreated.php',
@@ -698,8 +699,10 @@ class ComposerStaticInit53b5d56b3b7e3cbac1713e68c8850f6c
         'App\\Http\\Controllers\\Admin\\PaymentController' => __DIR__ . '/../..' . '/app/Http/Controllers/Admin/PaymentController.php',
         'App\\Http\\Controllers\\Admin\\PublisherController' => __DIR__ . '/../..' . '/app/Http/Controllers/Admin/PublisherController.php',
         'App\\Http\\Controllers\\Admin\\ReaderManagementController' => __DIR__ . '/../..' . '/app/Http/Controllers/Admin/ReaderManagementController.php',
+        'App\\Http\\Controllers\\Admin\\RenewController' => __DIR__ . '/../..' . '/app/Http/Controllers/Admin/RenewController.php',
         'App\\Http\\Controllers\\Admin\\ReportController' => __DIR__ . '/../..' . '/app/Http/Controllers/Admin/ReportController.php',
         'App\\Http\\Controllers\\Admin\\ReservationController' => __DIR__ . '/../..' . '/app/Http/Controllers/Admin/ReservationController.php',
+        'App\\Http\\Controllers\\Admin\\ReturnController' => __DIR__ . '/../..' . '/app/Http/Controllers/Admin/ReturnController.php',
         'App\\Http\\Controllers\\Admin\\RoleController' => __DIR__ . '/../..' . '/app/Http/Controllers/Admin/RoleController.php',
         'App\\Http\\Controllers\\Admin\\SystemSettingController' => __DIR__ . '/../..' . '/app/Http/Controllers/Admin/SystemSettingController.php',
         'App\\Http\\Controllers\\Admin\\UserController' => __DIR__ . '/../..' . '/app/Http/Controllers/Admin/UserController.php',
@@ -723,6 +726,9 @@ class ComposerStaticInit53b5d56b3b7e3cbac1713e68c8850f6c
         'App\\Http\\Middleware\\ReaderMiddleware' => __DIR__ . '/../..' . '/app/Http/Middleware/ReaderMiddleware.php',
         'App\\Http\\Middleware\\RoleMiddleware' => __DIR__ . '/../..' . '/app/Http/Middleware/RoleMiddleware.php',
         'App\\Http\\Requests\\BorrowBookRequest' => __DIR__ . '/../..' . '/app/Http/Requests/BorrowBookRequest.php',
+        'App\\Http\\Requests\\ConfirmReservationRequest' => __DIR__ . '/../..' . '/app/Http/Requests/ConfirmReservationRequest.php',
+        'App\\Http\\Requests\\CreateReservationRequest' => __DIR__ . '/../..' . '/app/Http/Requests/CreateReservationRequest.php',
+        'App\\Http\\Requests\\RenewBookRequest' => __DIR__ . '/../..' . '/app/Http/Requests/RenewBookRequest.php',
         'App\\Http\\Requests\\ReturnBookRequest' => __DIR__ . '/../..' . '/app/Http/Requests/ReturnBookRequest.php',
         'App\\Http\\Requests\\StoreBookRequest' => __DIR__ . '/../..' . '/app/Http/Requests/StoreBookRequest.php',
         'App\\Http\\Requests\\StoreUserRequest' => __DIR__ . '/../..' . '/app/Http/Requests/StoreUserRequest.php',
