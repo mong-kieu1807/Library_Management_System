@@ -190,4 +190,90 @@ class WishlistController extends Controller
 
         return response()->json(['message' => 'Đã xóa khỏi danh sách đọc.']);
     }
+
+    /**
+     * POST /v1/me/favorites/share
+     * share_token is UNIQUE per row — store token on ONE anchor row only.
+     */
+    public function share()
+    {
+        $userId = auth()->id();
+
+        // TC2: Reuse existing token if any favorite row already has one
+        $existingToken = DB::table('wishlists')
+            ->where('user_id', $userId)
+            ->where('list_type', 'favorite')
+            ->whereNotNull('share_token')
+            ->value('share_token');
+
+        if ($existingToken) {
+            return response()->json(['success' => true, 'token' => $existingToken]);
+        }
+
+        $anchor = DB::table('wishlists')
+            ->where('user_id', $userId)
+            ->where('list_type', 'favorite')
+            ->orderBy('wishlist_id')
+            ->first();
+
+        if (!$anchor) {
+            return response()->json(['message' => 'Bạn chưa có sách yêu thích nào.'], 422);
+        }
+
+        $token = (string) \Illuminate\Support\Str::uuid();
+
+        DB::table('wishlists')
+            ->where('wishlist_id', $anchor->wishlist_id)
+            ->update(['is_public' => true, 'share_token' => $token]);
+
+        return response()->json(['success' => true, 'token' => $token]);
+    }
+
+    /**
+     * GET /v1/public/shared/favorites/{token}
+     * No auth required. Finds owner from the anchor row, returns all their favorites.
+     */
+    public function publicView(string $token)
+    {
+        $anchor = DB::table('wishlists')
+            ->where('share_token', $token)
+            ->where('is_public', true)
+            ->first();
+
+        if (!$anchor) {
+            return response()->json(['message' => 'Danh sách không tìm thấy hoặc không còn công khai.'], 404);
+        }
+
+        $userId    = $anchor->user_id;
+        $ownerName = DB::table('users')->where('user_id', $userId)->value('full_name');
+
+        $rows = DB::table('wishlists as wl')
+            ->join('books as b', 'b.book_id', '=', 'wl.book_id')
+            ->where('wl.user_id', $userId)
+            ->where('wl.list_type', 'favorite')
+            ->select([
+                'wl.book_id',
+                'b.title',
+                'b.cover_image',
+                DB::raw('(SELECT a.author_name FROM book_authors ba JOIN authors a ON a.author_id = ba.author_id WHERE ba.book_id = wl.book_id LIMIT 1) as author_name'),
+                DB::raw('(SELECT ROUND(COALESCE(AVG(r.rating), 0), 1) FROM reviews r WHERE r.book_id = wl.book_id) as avg_rating'),
+                DB::raw("(SELECT COUNT(*) FROM book_copies bc WHERE bc.book_id = wl.book_id AND bc.status = 'available') as available_copies"),
+            ])
+            ->get();
+
+        return response()->json([
+            'data' => [
+                'owner_name' => $ownerName,
+                'total'      => $rows->count(),
+                'books'      => $rows->map(fn($row) => [
+                    'book_id'          => $row->book_id,
+                    'title'            => $row->title,
+                    'cover_image'      => $row->cover_image,
+                    'author_name'      => $row->author_name,
+                    'avg_rating'       => $row->avg_rating !== null ? (float) $row->avg_rating : null,
+                    'available_copies' => (int) $row->available_copies,
+                ]),
+            ],
+        ]);
+    }
 }
