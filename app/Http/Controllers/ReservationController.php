@@ -8,6 +8,64 @@ use Illuminate\Support\Facades\DB;
 
 class ReservationController extends Controller
 {
+    public function store(Request $request)
+{
+    $userId = auth()->id();
+
+    $request->validate([
+        'book_id' => 'required|integer|exists:books,book_id',
+    ]);
+
+    $bookId = $request->book_id;
+
+    // Kiểm tra còn bản sao available không
+    $availableCopies = DB::table('book_copies')
+        ->where('book_id', $bookId)
+        ->where('status', 'available')
+        ->count();
+
+    if ($availableCopies > 0) {
+        return response()->json([
+            'message' => 'Sách vẫn còn bản sao khả dụng, không cần đặt trước.'
+        ], 422);
+    }
+
+    // Kiểm tra đã đặt trước chưa
+    $exists = DB::table('reservations')
+        ->where('user_id', $userId)
+        ->where('book_id', $bookId)
+        ->whereIn('status', ['waiting', 'ready'])
+        ->exists();
+
+    if ($exists) {
+        return response()->json([
+            'message' => 'Bạn đã đặt trước sách này.'
+        ], 422);
+    }
+
+    // FIFO
+    $queuePosition =
+        DB::table('reservations')
+            ->where('book_id', $bookId)
+            ->whereIn('status', ['waiting', 'ready'])
+            ->count() + 1;
+
+    $reservationId = DB::table('reservations')->insertGetId([
+        'user_id' => $userId,
+        'book_id' => $bookId,
+        'queue_position' => $queuePosition,
+        'status' => 'waiting',
+        'created_at' => now(),
+    ]);
+
+    return response()->json([
+        'message' => 'Đặt trước thành công',
+        'reservation_id' => $reservationId,
+        'queue_position' => $queuePosition,
+    ], 201);
+}
+
+
     public function cancel(Request $request, int $reservationId)
     {
         $userId = auth()->id();
@@ -83,5 +141,8 @@ class ReservationController extends Controller
         });
 
         return response()->json(['data' => $data]);
-    }
+ }
+
+
+       
 }

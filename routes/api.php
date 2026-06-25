@@ -68,6 +68,10 @@ Route::prefix('v1/profile')->group(function () {
     Route::put('/{userId}',         [ProfileController::class, 'update']);
     Route::post('/{userId}/avatar', [ProfileController::class, 'updateAvatar']);
 });
+    Route::post(
+        'v1/reservations',
+        [ReservationController::class, 'reserveBook']
+    );
 Route::middleware('auth:sanctum')->prefix('v1/me')->group(function () {
     Route::get('/borrowing', [BorrowingController::class, 'index']);
     Route::get('/borrowing/history', [BorrowingController::class, 'history']);
@@ -79,6 +83,10 @@ Route::middleware('auth:sanctum')->prefix('v1/me')->group(function () {
     Route::post('/wishlist',                [WishlistController::class, 'store']);
     Route::patch('/wishlist/{wishlistId}',  [WishlistController::class, 'update']);
     Route::delete('/wishlist/{wishlistId}', [WishlistController::class, 'destroy']);
+
+    Route::get('/reservations', [ReservationController::class, 'index']);
+    Route::post('/reservations', [ReservationController::class, 'store']);
+    Route::delete('/reservations/{reservationId}', [ReservationController::class, 'cancel']);
 });
 
 Route::middleware(['auth:sanctum', 'role:admin,librarian'])->prefix('private/v1')->group(function () {
