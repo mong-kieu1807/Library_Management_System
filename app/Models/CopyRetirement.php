@@ -17,6 +17,7 @@ class CopyRetirement extends Model
     }
     protected $primaryKey = 'retirement_id';
     public $incrementing = true;
+    public $timestamps = false;
     protected $fillable = [
     'copy_id',
     'reason',
