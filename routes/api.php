@@ -13,6 +13,13 @@ use App\Http\Controllers\ReservationController;
 use App\Http\Controllers\FineController;
 use App\Http\Controllers\WishlistController;
 use App\Http\Controllers\RecommendationController;
+use App\Http\Controllers\Admin\BorrowTransactionController;
+use App\Http\Controllers\Admin\ReturnController;
+use App\Http\Controllers\Admin\RenewController;
+use App\Http\Controllers\Admin\ReservationController as AdminReservationController;
+use App\Http\Controllers\Admin\ReceiptController;
+use App\Http\Controllers\Admin\HistoryController;
+
 
 Route::prefix('v1/auth')->group(function () {
     Route::post('/register', [AuthController::class, 'register']);
@@ -108,6 +115,52 @@ Route::middleware(['auth:sanctum', 'role:admin,librarian'])->prefix('private/v1'
 
     // Access Audit Logs (Login Logs) for both admin and librarians
     Route::get('/login-logs', [App\Http\Controllers\Admin\LoginLogController::class, 'index']);
+
+    // Book Checkout (Check-out) + Renew
+    Route::prefix('checkout')->group(function () {
+        Route::get('/find-reader',          [BorrowTransactionController::class, 'findReader']);
+        Route::get('/available-copies',     [BorrowTransactionController::class, 'searchAvailableCopies']);
+        Route::get('/copy/{barcode}',       [BorrowTransactionController::class, 'validateCopy']);
+        Route::post('/',              [BorrowTransactionController::class, 'store']);
+        Route::get('/renew-list',     [RenewController::class, 'getRenewList']);
+        Route::post('/renew',         [RenewController::class, 'renewBook']);
+    });
+
+    // Book Return (Check-in)
+    Route::prefix('return')->group(function () {
+        Route::get('/search-reader',            [ReturnController::class, 'searchReader']);
+        Route::get('/borrowed-books/{user_id}', [ReturnController::class, 'getBorrowedBooks']);
+        Route::get('/validate/{barcode}',       [ReturnController::class, 'validateReturnCopy']);
+        Route::post('/confirm',                 [ReturnController::class, 'confirmReturn']);
+    });
+
+    // User history (read-only aggregation)
+    Route::get('/users/{user_id}/history', [HistoryController::class, 'getUserHistory']);
+
+    // Transaction log — Lịch sử giao dịch
+    Route::get('/transactions/log', [HistoryController::class, 'getTransactionLog']);
+
+    // Dashboard Analytics (admin + librarian access)
+    Route::get('/dashboard/summary',   [App\Http\Controllers\Admin\DashboardController::class, 'getSummary']);
+    Route::get('/dashboard/borrows',   [App\Http\Controllers\Admin\DashboardController::class, 'getBorrowStats']);
+    Route::get('/dashboard/top-books', [App\Http\Controllers\Admin\DashboardController::class, 'getTopBooks']);
+    Route::get('/dashboard/overdue',   [App\Http\Controllers\Admin\DashboardController::class, 'getOverdueList']);
+
+    // PDF Receipts
+    Route::prefix('receipt')->group(function () {
+        Route::get('/checkout/{borrow_id}', [ReceiptController::class, 'checkoutReceipt']);
+        Route::get('/return/{borrow_id}',   [ReceiptController::class, 'returnReceipt']);
+    });
+
+    // Reservation (Đặt trước sách)
+    Route::prefix('reservation')->group(function () {
+        Route::get('/search-book',  [AdminReservationController::class, 'searchBook']);
+        Route::get('/list',         [AdminReservationController::class, 'listReservations']);
+        Route::post('/create',      [AdminReservationController::class, 'createReservation']);
+        Route::post('/confirm',     [AdminReservationController::class, 'confirmReservation']);
+        Route::post('/cancel',      [AdminReservationController::class, 'cancelReservation']);
+        Route::post('/expire',      [AdminReservationController::class, 'expireReservations']);
+    });
 });
 
 Route::middleware(['auth:sanctum', 'role:admin'])->prefix('private/v1')->group(function () {
@@ -122,7 +175,7 @@ Route::middleware(['auth:sanctum', 'role:admin'])->prefix('private/v1')->group(f
     Route::patch('/readers/{id}/status', [App\Http\Controllers\Admin\ReaderManagementController::class, 'toggleStatus']);
     Route::post('/readers/{id}/reset-password', [App\Http\Controllers\Admin\ReaderManagementController::class, 'resetPassword']);
 
-    // Dashboard Routes
+    // Dashboard Routes (admin only — legacy)
     Route::get('/dashboard', [App\Http\Controllers\Admin\DashboardController::class, 'getDashboardData']);
     Route::get('/dashboard/recent-activities', [App\Http\Controllers\Admin\DashboardController::class, 'getRecentActivities']);
 });
