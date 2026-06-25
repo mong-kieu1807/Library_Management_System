@@ -1,258 +1,424 @@
 <?php
+
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
-use App\Models\User;
-use App\Models\Book;
-use App\Models\BookCopy;
-use App\Models\BorrowTransaction;
-use App\Models\LibraryCard;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class DashboardController extends Controller
 {
+    // ─── Helpers ──────────────────────────────────────────────────────────
+
+    private function overdueWhere($query)
+    {
+        return $query
+            ->whereNull('bd.return_date')
+            ->whereRaw('bt.due_date < CURDATE()');
+    }
+
+    // ─── [LEGACY] Full combined endpoint ─────────────────────────────────
+
     /**
-     * Get aggregate statistics and chart data for the Admin Dashboard.
+     * GET /private/v1/dashboard
+     * Keeps backward compatibility with the existing DashboardPage.tsx.
      */
     public function getDashboardData()
     {
-        // 1. Total books
-        $totalBooks = Book::count();
-        if ($totalBooks === 0) $totalBooks = 12847;
+        // -- stats --
+        $totalBooks = (int) DB::table('books')->count();
 
-        // 2. Active readers (status = 1)
-        $activeUsers = User::whereHas('role', function ($q) {
-            $q->where('role_name', 'reader');
-        })->where('status', 1)->count();
-        if ($activeUsers === 0) $activeUsers = 1532;
+        $activeUsers = (int) DB::table('users')
+            ->join('roles', 'roles.role_id', '=', 'users.role_id')
+            ->where('roles.role_name', 'reader')
+            ->where('users.status', 1)
+            ->count();
 
-        // 3. Overdue books count
-        $overdueCount = DB::table('borrow_transactions as bt')
-            ->join('borrow_details as bd', 'bt.borrow_id', '=', 'bd.borrow_id')
+        $overdueCount = (int) DB::table('borrow_transactions as bt')
+            ->join('borrow_details as bd', 'bd.borrow_id', '=', 'bt.borrow_id')
             ->whereNull('bd.return_date')
-            ->where('bt.due_date', '<', now())
+            ->whereRaw('bt.due_date < CURDATE()')
             ->count();
-        if ($overdueCount === 0) $overdueCount = 47;
 
-        // 4. Monthly borrows (fall back to total transactions if month is empty)
-        $totalBorrowMonth = DB::table('borrow_transactions')
-            ->whereMonth('borrow_date', date('m'))
-            ->whereYear('borrow_date', date('Y'))
+        $totalBorrowMonth = (int) DB::table('borrow_transactions')
+            ->whereMonth('borrow_date', now()->month)
+            ->whereYear('borrow_date', now()->year)
             ->count();
-        if ($totalBorrowMonth === 0) {
-            $totalBorrowMonth = BorrowTransaction::count() ?: 3284;
-        }
 
-        // 5. Generate 30 days of trend data
+        // -- 30-day trend (real data) --
+        $today = Carbon::today();
         $trendData = [];
-        $maxDateStr = DB::table('borrow_transactions')->max('borrow_date') ?: date('Y-m-d');
-        $maxDate = new \DateTime($maxDateStr);
-
         for ($i = 29; $i >= 0; $i--) {
-            $date = clone $maxDate;
-            $date->modify("-$i days");
-            $dateStr = $date->format('Y-m-d');
-
-            $borrowCount = DB::table('borrow_transactions')
-                ->whereDate('borrow_date', $dateStr)
-                ->count();
-
-            $returnCount = DB::table('borrow_details')
-                ->whereDate('return_date', $dateStr)
-                ->count();
-
-            // Add realistic random variation if db is seeded with just 1 record per day
-            if ($borrowCount <= 1) {
-                $borrowCount = rand(15, 30);
-            }
-            if ($returnCount <= 1) {
-                $returnCount = rand(10, 25);
-            }
-
-            $trendData[] = [
-                'day' => (string)(30 - $i),
-                'borrow' => $borrowCount,
-                'return' => $returnCount,
-            ];
+            $date    = $today->copy()->subDays($i)->format('Y-m-d');
+            $borrow  = DB::table('borrow_transactions')->whereDate('borrow_date', $date)->count();
+            $return  = DB::table('borrow_details')->whereDate('return_date', $date)->count();
+            $trendData[] = ['day' => $date, 'borrow' => $borrow, 'return' => $return];
         }
 
-        // 6. Inventory Data
-        $availableCopies = BookCopy::where('status', 'available')->count();
-        $borrowedCopies = BookCopy::where('status', 'borrowed')->count();
-        $reservedCopies = DB::table('reservations')->whereIn('status', ['waiting', 'ready'])->count();
-        $maintenanceCopies = BookCopy::where('status', 'maintenance')->count();
-
-        // Fallback for fresh DB
-        if ($availableCopies === 0 && $borrowedCopies === 0) {
-            $availableCopies = 8420;
-            $borrowedCopies = 2156;
-            $reservedCopies = 312;
-            $maintenanceCopies = 87;
-        }
+        // -- inventory --
+        $copies     = DB::table('book_copies')
+            ->selectRaw("status, COUNT(*) as cnt")
+            ->groupBy('status')
+            ->pluck('cnt', 'status');
+        $reserved   = DB::table('reservations')->whereIn('status', ['waiting', 'ready'])->count();
 
         $inventoryData = [
-            ['name' => 'Có sẵn', 'value' => $availableCopies, 'color' => '#10B981'],
-            ['name' => 'Đang mượn', 'value' => $borrowedCopies, 'color' => '#3B82F6'],
-            ['name' => 'Đã đặt trước', 'value' => $reservedCopies, 'color' => '#F59E0B'],
-            ['name' => 'Hỏng / Mất', 'value' => $maintenanceCopies, 'color' => '#EF4444'],
+            ['name' => 'Có sẵn',      'value' => (int)($copies['available'] ?? 0),    'color' => '#10B981'],
+            ['name' => 'Đang mượn',   'value' => (int)($copies['borrowed'] ?? 0),     'color' => '#3B82F6'],
+            ['name' => 'Đặt trước',   'value' => (int)$reserved,                       'color' => '#F59E0B'],
+            ['name' => 'Bảo dưỡng',   'value' => (int)($copies['maintenance'] ?? 0),  'color' => '#EF4444'],
         ];
 
-        // 7. Top 5 borrowed books
-        $topBooks = DB::table('borrow_details')
-            ->join('book_copies', 'borrow_details.copy_id', '=', 'book_copies.copy_id')
-            ->join('books', 'book_copies.book_id', '=', 'books.book_id')
-            ->leftJoin('authors', 'books.author_id', '=', 'authors.author_id')
-            ->select('books.title', 'authors.author_name as author', DB::raw('count(borrow_details.borrow_id) as count'))
-            ->groupBy('books.book_id', 'books.title', 'authors.author_name')
-            ->orderBy('count', 'desc')
+        // -- top 5 books --
+        $topBooks = DB::table('borrow_details as bd')
+            ->join('book_copies as bc', 'bc.copy_id', '=', 'bd.copy_id')
+            ->join('books as b', 'b.book_id', '=', 'bc.book_id')
+            ->leftJoin('authors as a', 'a.author_id', '=', 'b.author_id')
+            ->select('b.title', DB::raw('COALESCE(a.author_name,"") as author'), DB::raw('COUNT(*) as cnt'))
+            ->groupBy('b.book_id', 'b.title', 'a.author_name')
+            ->orderByDesc('cnt')
             ->limit(5)
-            ->get();
+            ->get()
+            ->values()
+            ->map(fn ($r, $i) => ['rank' => $i + 1, 'title' => $r->title, 'author' => $r->author, 'borrows' => (int)$r->cnt]);
 
-        $topBooksFormatted = [];
-        $rank = 1;
-        foreach ($topBooks as $book) {
-            $topBooksFormatted[] = [
-                'rank' => $rank++,
-                'title' => $book->title,
-                'author' => $book->author ?: 'Chưa cập nhật',
-                'borrows' => $book->count,
-            ];
-        }
-
-        if (empty($topBooksFormatted)) {
-            $topBooksFormatted = [
-                ['rank' => 1, 'title' => 'Đắc Nhân Tâm', 'author' => 'Dale Carnegie', 'borrows' => 142],
-                ['rank' => 2, 'title' => 'Nhà Giả Kim', 'author' => 'Paulo Coelho', 'borrows' => 128],
-                ['rank' => 3, 'title' => 'Tuổi Trẻ Đáng Giá Bao Nhiêu', 'author' => 'Rosie Nguyễn', 'borrows' => 117],
-                ['rank' => 4, 'title' => 'Sapiens: Lược Sử Loài Người', 'author' => 'Yuval Noah Harari', 'borrows' => 98],
-                ['rank' => 5, 'title' => 'Cây Cam Ngọt Của Tôi', 'author' => 'José Mauro de Vasconcelos', 'borrows' => 89],
-            ];
-        }
-
-        // 8. Overdue list details
-        $overdueList = DB::select("
-            SELECT 
-                bt.borrow_id as id,
-                u.full_name as reader,
-                b.title as book,
-                DATEDIFF(NOW(), bt.due_date) as days,
-                COALESCE(f.amount, DATEDIFF(NOW(), bt.due_date) * 5000) as fee
-            FROM borrow_transactions bt
-            JOIN users u ON bt.user_id = u.user_id
-            JOIN borrow_details bd ON bt.borrow_id = bd.borrow_id
-            JOIN book_copies bc ON bd.copy_id = bc.copy_id
-            JOIN books b ON bc.book_id = b.book_id
-            LEFT JOIN fines f ON bt.borrow_id = f.borrow_id AND bd.copy_id = f.copy_id
-            WHERE bd.return_date IS NULL AND bt.due_date < NOW()
-            ORDER BY days DESC
-            LIMIT 5
-        ");
-
-        $overdueListFormatted = [];
-        foreach ($overdueList as $item) {
-            $overdueListFormatted[] = [
-                'id' => 'GD-' . $item->id,
-                'reader' => $item->reader,
-                'book' => $item->book,
-                'days' => (int)$item->days,
-                'fee' => (double)$item->fee,
-            ];
-        }
-
-        if (empty($overdueListFormatted)) {
-            $overdueListFormatted = [
-                ['id' => 'GD-2841', 'reader' => 'Nguyễn Văn An', 'book' => 'Đắc Nhân Tâm', 'days' => 12, 'fee' => 60000],
-                ['id' => 'GD-2837', 'reader' => 'Trần Thị Bình', 'book' => 'Sapiens', 'days' => 8, 'fee' => 40000],
-                ['id' => 'GD-2829', 'reader' => 'Lê Hoàng Cường', 'book' => 'Nhà Giả Kim', 'days' => 5, 'fee' => 25000],
-                ['id' => 'GD-2814', 'reader' => 'Phạm Minh Đức', 'book' => 'Tuổi Trẻ Đáng Giá Bao Nhiêu', 'days' => 3, 'fee' => 15000],
-            ];
-        }
+        // -- overdue top-5 --
+        $overdueList = DB::table('borrow_transactions as bt')
+            ->join('users as u', 'u.user_id', '=', 'bt.user_id')
+            ->join('borrow_details as bd', function ($j) {
+                $j->on('bd.borrow_id', '=', 'bt.borrow_id')->whereNull('bd.return_date');
+            })
+            ->join('book_copies as bc', 'bc.copy_id', '=', 'bd.copy_id')
+            ->join('books as b', 'b.book_id', '=', 'bc.book_id')
+            ->leftJoin('fines as f', function ($j) {
+                $j->on('f.borrow_id', '=', 'bt.borrow_id')->on('f.copy_id', '=', 'bd.copy_id');
+            })
+            ->whereNull('bd.return_date')
+            ->whereRaw('bt.due_date < CURDATE()')
+            ->select([
+                'bt.borrow_id',
+                'u.full_name as reader',
+                'b.title as book',
+                DB::raw('DATEDIFF(CURDATE(), bt.due_date) as days'),
+                DB::raw('COALESCE(f.amount, DATEDIFF(CURDATE(), bt.due_date) * (SELECT CAST(config_value AS UNSIGNED) FROM system_settings WHERE config_key="fine_per_day" LIMIT 1)) as fee'),
+            ])
+            ->orderByDesc('days')
+            ->limit(5)
+            ->get()
+            ->map(fn ($r) => [
+                'id'     => 'GD-' . $r->borrow_id,
+                'reader' => $r->reader,
+                'book'   => $r->book,
+                'days'   => (int) $r->days,
+                'fee'    => (float) $r->fee,
+            ]);
 
         return response()->json([
-            'code' => 200,
+            'code'    => 200,
             'results' => [
                 'object' => [
                     'stats' => [
-                        'totalBooks' => $totalBooks,
-                        'activeUsers' => $activeUsers,
-                        'overdueCount' => $overdueCount,
-                        'totalBorrowMonth' => $totalBorrowMonth,
+                        'totalBooks'        => $totalBooks,
+                        'activeUsers'       => $activeUsers,
+                        'overdueCount'      => $overdueCount,
+                        'totalBorrowMonth'  => $totalBorrowMonth,
                     ],
-                    'trendData' => $trendData,
+                    'trendData'     => $trendData,
                     'inventoryData' => $inventoryData,
-                    'topBooks' => $topBooksFormatted,
-                    'overdueList' => $overdueListFormatted,
-                ]
-            ]
+                    'topBooks'      => $topBooks,
+                    'overdueList'   => $overdueList,
+                ],
+            ],
         ]);
     }
 
     /**
-     * Get paginated recent activities (borrow events).
+     * GET /private/v1/dashboard/recent-activities
      */
     public function getRecentActivities(Request $request)
     {
-        $page = (int)$request->input('page', 1);
-        $limit = (int)$request->input('limit', 5);
+        $page  = max(1, (int) $request->input('page', 1));
+        $limit = max(1, (int) $request->input('limit', 5));
 
-        $paginator = DB::table('borrow_transactions')
-            ->join('users', 'borrow_transactions.user_id', '=', 'users.user_id')
-            ->join('borrow_details', 'borrow_transactions.borrow_id', '=', 'borrow_details.borrow_id')
-            ->join('book_copies', 'borrow_details.copy_id', '=', 'book_copies.copy_id')
-            ->join('books', 'book_copies.book_id', '=', 'books.book_id')
-            ->select(
-                'borrow_details.borrow_detail_id as id',
-                'users.full_name as userName',
-                'books.title as courseName',
-                'borrow_transactions.borrow_date as date'
-            )
-            ->orderBy('borrow_transactions.borrow_id', 'desc')
+        $paginator = DB::table('borrow_transactions as bt')
+            ->join('users as u', 'u.user_id', '=', 'bt.user_id')
+            ->join('borrow_details as bd', 'bd.borrow_id', '=', 'bt.borrow_id')
+            ->join('book_copies as bc', 'bc.copy_id', '=', 'bd.copy_id')
+            ->join('books as b', 'b.book_id', '=', 'bc.book_id')
+            ->select('bd.borrow_id as id', 'u.full_name as userName', 'b.title as courseName', 'bt.borrow_date as date')
+            ->orderByDesc('bt.borrow_id')
             ->paginate($limit, ['*'], 'page', $page);
 
-        $rows = collect($paginator->items())->map(function ($row) {
-            return [
-                'id' => (string)$row->id,
-                'userName' => $row->userName,
-                'courseName' => $row->courseName,
-                'date' => $row->date,
-            ];
-        })->toArray();
+        $rows = collect($paginator->items())->map(fn ($r) => [
+            'id'         => (string) $r->id,
+            'userName'   => $r->userName,
+            'courseName' => $r->courseName,
+            'date'       => $r->date,
+        ]);
 
-        // Fallback for fresh DB
-        if (empty($rows)) {
-            $rows = [
-                [
-                    'id' => '1',
-                    'userName' => 'Nguyễn Văn An',
-                    'courseName' => 'Đắc Nhân Tâm',
-                    'date' => now()->subHours(2)->toIso8601String(),
+        return response()->json([
+            'code'    => 200,
+            'results' => [
+                'objects' => [
+                    'rows'  => $rows,
+                    'total' => $paginator->total(),
+                    'page'  => $page,
+                    'limit' => $limit,
                 ],
-                [
-                    'id' => '2',
-                    'userName' => 'Trần Thị Bình',
-                    'courseName' => 'Nhà Giả Kim',
-                    'date' => now()->subHours(5)->toIso8601String(),
+            ],
+        ]);
+    }
+
+    // ─── [NEW] Dedicated analytics endpoints ─────────────────────────────
+
+    /**
+     * GET /private/v1/dashboard/summary
+     * 6 KPI metrics — real-time, no fake fallback.
+     */
+    public function getSummary()
+    {
+        $finePerDay = (int) DB::table('system_settings')
+            ->where('config_key', 'fine_per_day')->value('config_value') ?: 5000;
+
+        [$totalBooks, $activeBorrows, $overdueUsers, $unpaidFines,
+         $totalReservations, $transactionsToday, $totalCopies] = [
+            DB::table('books')->count(),
+            DB::table('borrow_details')->whereNull('return_date')->count(),
+            DB::table('borrow_transactions as bt')
+                ->join('borrow_details as bd', 'bd.borrow_id', '=', 'bt.borrow_id')
+                ->whereNull('bd.return_date')->whereRaw('bt.due_date < CURDATE()')
+                ->distinct()->count('bt.user_id'),
+            DB::table('fines')->where('status', 'unpaid')->sum('amount'),
+            DB::table('reservations')->whereIn('status', ['waiting', 'ready'])->count(),
+            DB::table('borrow_transactions')->whereDate('borrow_date', today())->count(),
+            DB::table('book_copies')->count(),
+        ];
+
+        // Overdue severity breakdown
+        $overdueSeverity = DB::table('borrow_transactions as bt')
+            ->join('borrow_details as bd', function ($j) {
+                $j->on('bd.borrow_id', '=', 'bt.borrow_id')->whereNull('bd.return_date');
+            })
+            ->whereRaw('bt.due_date < CURDATE()')
+            ->selectRaw("
+                SUM(CASE WHEN DATEDIFF(CURDATE(), bt.due_date) BETWEEN 1 AND 3  THEN 1 ELSE 0 END) as light,
+                SUM(CASE WHEN DATEDIFF(CURDATE(), bt.due_date) BETWEEN 4 AND 10 THEN 1 ELSE 0 END) as medium,
+                SUM(CASE WHEN DATEDIFF(CURDATE(), bt.due_date) > 10             THEN 1 ELSE 0 END) as heavy
+            ")
+            ->first();
+
+        // Reservation flow
+        $reservationFlow = DB::table('reservations')
+            ->selectRaw("status, COUNT(*) as cnt")
+            ->groupBy('status')
+            ->pluck('cnt', 'status');
+
+        return response()->json([
+            'code'    => 200,
+            'results' => [
+                'object' => [
+                    'total_books'          => (int) $totalBooks,
+                    'total_copies'         => (int) $totalCopies,
+                    'active_borrows'       => (int) $activeBorrows,
+                    'overdue_users'        => (int) $overdueUsers,
+                    'total_fines_unpaid'   => (int) $unpaidFines,
+                    'total_reservations'   => (int) $totalReservations,
+                    'transactions_today'   => (int) $transactionsToday,
+                    'fine_per_day'         => $finePerDay,
+                    'overdue_severity'     => [
+                        'light'  => (int)($overdueSeverity->light  ?? 0),
+                        'medium' => (int)($overdueSeverity->medium ?? 0),
+                        'heavy'  => (int)($overdueSeverity->heavy  ?? 0),
+                    ],
+                    'reservation_flow'     => [
+                        'waiting'   => (int)($reservationFlow['waiting']   ?? 0),
+                        'ready'     => (int)($reservationFlow['ready']     ?? 0),
+                        'converted' => (int)($reservationFlow['converted'] ?? 0),
+                        'expired'   => (int)($reservationFlow['expired']   ?? 0),
+                        'cancelled' => (int)($reservationFlow['cancelled'] ?? 0),
+                    ],
                 ],
-                [
-                    'id' => '3',
-                    'userName' => 'Lê Hoàng Cường',
-                    'courseName' => 'Sapiens: Lược Sử Loài Người',
-                    'date' => now()->subDay()->toIso8601String(),
-                ],
-            ];
+            ],
+        ]);
+    }
+
+    /**
+     * GET /private/v1/dashboard/borrows?range=30d|7d|90d
+     * Daily borrow + return counts for the requested range.
+     */
+    public function getBorrowStats(Request $request)
+    {
+        $range = $request->input('range', '30d');
+        $days  = match ($range) {
+            '7d'  => 7,
+            '90d' => 90,
+            default => 30,
+        };
+
+        $today  = Carbon::today();
+        $series = [];
+
+        for ($i = $days - 1; $i >= 0; $i--) {
+            $date   = $today->copy()->subDays($i)->format('Y-m-d');
+            $borrow = DB::table('borrow_transactions')->whereDate('borrow_date', $date)->count();
+            $return = DB::table('borrow_details')->whereDate('return_date', $date)->count();
+            $series[] = ['date' => $date, 'borrow' => (int)$borrow, 'return' => (int)$return];
+        }
+
+        // Monthly grouping for long ranges
+        $monthlyGroups = [];
+        foreach ($series as $row) {
+            $month = substr($row['date'], 0, 7); // YYYY-MM
+            if (!isset($monthlyGroups[$month])) {
+                $monthlyGroups[$month] = ['month' => $month, 'borrow' => 0, 'return' => 0];
+            }
+            $monthlyGroups[$month]['borrow'] += $row['borrow'];
+            $monthlyGroups[$month]['return']  += $row['return'];
         }
 
         return response()->json([
-            'code' => 200,
+            'code'    => 200,
             'results' => [
-                'objects' => [
-                    'rows' => $rows,
-                    'total' => $paginator->total() ?: count($rows),
-                    'page' => $page,
-                    'limit' => $limit,
-                ]
-            ]
+                'object' => [
+                    'range'   => $range,
+                    'days'    => $days,
+                    'series'  => $series,
+                    'monthly' => array_values($monthlyGroups),
+                ],
+            ],
+        ]);
+    }
+
+    /**
+     * GET /private/v1/dashboard/top-books
+     * Top 10 most borrowed + top 10 most reserved.
+     */
+    public function getTopBooks()
+    {
+        $topBorrowed = DB::table('borrow_details as bd')
+            ->join('book_copies as bc', 'bc.copy_id', '=', 'bd.copy_id')
+            ->join('books as b', 'b.book_id', '=', 'bc.book_id')
+            ->leftJoin('authors as a', 'a.author_id', '=', 'b.author_id')
+            ->select('b.book_id', 'b.title', 'b.cover_image', DB::raw('COALESCE(a.author_name,"") as author'), DB::raw('COUNT(*) as borrow_count'))
+            ->groupBy('b.book_id', 'b.title', 'b.cover_image', 'a.author_name')
+            ->orderByDesc('borrow_count')
+            ->limit(10)
+            ->get()
+            ->values()
+            ->map(fn ($r, $i) => [
+                'rank'         => $i + 1,
+                'book_id'      => $r->book_id,
+                'title'        => $r->title,
+                'author'       => $r->author,
+                'cover_image'  => $r->cover_image,
+                'borrow_count' => (int)$r->borrow_count,
+            ]);
+
+        $topReserved = DB::table('reservations as r')
+            ->join('books as b', 'b.book_id', '=', 'r.book_id')
+            ->leftJoin('authors as a', 'a.author_id', '=', 'b.author_id')
+            ->select('b.book_id', 'b.title', 'b.cover_image', DB::raw('COALESCE(a.author_name,"") as author'), DB::raw('COUNT(*) as reservation_count'))
+            ->groupBy('b.book_id', 'b.title', 'b.cover_image', 'a.author_name')
+            ->orderByDesc('reservation_count')
+            ->limit(10)
+            ->get()
+            ->values()
+            ->map(fn ($r, $i) => [
+                'rank'              => $i + 1,
+                'book_id'           => $r->book_id,
+                'title'             => $r->title,
+                'author'            => $r->author,
+                'cover_image'       => $r->cover_image,
+                'reservation_count' => (int)$r->reservation_count,
+            ]);
+
+        return response()->json([
+            'code'    => 200,
+            'results' => [
+                'object' => [
+                    'top_borrowed' => $topBorrowed,
+                    'top_reserved' => $topReserved,
+                ],
+            ],
+        ]);
+    }
+
+    /**
+     * GET /private/v1/dashboard/overdue
+     * Full overdue list with per-copy severity classification.
+     */
+    public function getOverdueList()
+    {
+        $finePerDay = (int) DB::table('system_settings')
+            ->where('config_key', 'fine_per_day')->value('config_value') ?: 5000;
+
+        $rows = DB::table('borrow_transactions as bt')
+            ->join('users as u', 'u.user_id', '=', 'bt.user_id')
+            ->leftJoin('library_cards as lc', 'lc.user_id', '=', 'u.user_id')
+            ->join('borrow_details as bd', function ($j) {
+                $j->on('bd.borrow_id', '=', 'bt.borrow_id')->whereNull('bd.return_date');
+            })
+            ->join('book_copies as bc', 'bc.copy_id', '=', 'bd.copy_id')
+            ->join('books as b', 'b.book_id', '=', 'bc.book_id')
+            ->leftJoin('fines as f', function ($j) {
+                $j->on('f.borrow_id', '=', 'bd.borrow_id')->on('f.copy_id', '=', 'bd.copy_id');
+            })
+            ->whereNull('bd.return_date')
+            ->whereRaw('bt.due_date < CURDATE()')
+            ->select([
+                'bt.borrow_id',
+                'bt.due_date',
+                'u.user_id',
+                'u.full_name',
+                'u.email',
+                'lc.card_number',
+                'bc.barcode',
+                'b.book_id',
+                'b.title',
+                DB::raw('DATEDIFF(CURDATE(), bt.due_date) as overdue_days'),
+                DB::raw('COALESCE(f.amount, 0) as fine_amount'),
+                DB::raw('COALESCE(f.status, "none") as fine_status'),
+            ])
+            ->orderByDesc('overdue_days')
+            ->get()
+            ->map(function ($r) use ($finePerDay) {
+                $days = (int) $r->overdue_days;
+                return [
+                    'borrow_id'    => $r->borrow_id,
+                    'due_date'     => $r->due_date,
+                    'user_id'      => $r->user_id,
+                    'full_name'    => $r->full_name,
+                    'email'        => $r->email,
+                    'card_number'  => $r->card_number,
+                    'barcode'      => $r->barcode,
+                    'book_id'      => $r->book_id,
+                    'title'        => $r->title,
+                    'overdue_days' => $days,
+                    'severity'     => $days <= 3 ? 'light' : ($days <= 10 ? 'medium' : 'heavy'),
+                    'fine_amount'  => (int) $r->fine_amount > 0
+                        ? (int) $r->fine_amount
+                        : $days * $finePerDay,
+                    'fine_status'  => $r->fine_status,
+                ];
+            });
+
+        // Summary counts
+        $summary = [
+            'total'  => $rows->count(),
+            'light'  => $rows->where('severity', 'light')->count(),
+            'medium' => $rows->where('severity', 'medium')->count(),
+            'heavy'  => $rows->where('severity', 'heavy')->count(),
+        ];
+
+        return response()->json([
+            'code'    => 200,
+            'results' => [
+                'object' => [
+                    'summary' => $summary,
+                    'rows'    => $rows->values(),
+                ],
+            ],
         ]);
     }
 }
