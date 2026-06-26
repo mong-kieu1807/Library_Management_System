@@ -13,7 +13,7 @@ class ReceiptService
      */
     public function generateCheckoutPdf(int $borrowId): \Illuminate\Http\Response
     {
-        // [1] Borrow + reader
+        // [1] Borrow + reader + librarian
         $borrow = DB::table('borrow_transactions as bt')
             ->join('users as u', 'u.user_id', '=', 'bt.user_id')
             ->leftJoin('library_cards as lc', 'lc.user_id', '=', 'u.user_id')
@@ -29,17 +29,17 @@ class ReceiptService
 
         abort_if(!$borrow, 404, 'Phiếu mượn không tồn tại.');
 
-        // [2] Books
+        // [2] Books — barcode + title only (isbn removed)
         $books = DB::table('borrow_details as bd')
             ->join('book_copies as bc', 'bc.copy_id', '=', 'bd.copy_id')
             ->join('books as b', 'b.book_id', '=', 'bc.book_id')
             ->where('bd.borrow_id', $borrowId)
-            ->select(['bc.barcode', 'b.title', 'b.isbn'])
+            ->select(['bc.barcode', 'b.title'])
             ->get();
 
         // [3] Settings
         $settings = DB::table('system_settings')
-            ->whereIn('config_key', ['library_name', 'address', 'contact_phone', 'fine_per_day'])
+            ->whereIn('config_key', ['library_name', 'address', 'contact_phone'])
             ->pluck('config_value', 'config_key');
 
         $data = [
@@ -52,7 +52,6 @@ class ReceiptService
             'books'       => $books,
             'librarian'   => $borrow->librarian_name ?? 'Thủ thư',
             'libraryName' => $settings['library_name'] ?? 'Thư Viện',
-            'finePerDay'  => (int) ($settings['fine_per_day'] ?? 5000),
             'settings'    => $settings,
         ];
 
@@ -66,10 +65,11 @@ class ReceiptService
     /**
      * Tạo PDF biên lai trả sách cho một borrow_transaction.
      * Hiển thị tất cả sách đã trả (return_date IS NOT NULL).
+     * JOIN payments để tính paid_amount và unpaid_amount.
      */
     public function generateReturnPdf(int $borrowId): \Illuminate\Http\Response
     {
-        // [1] Borrow + reader
+        // [1] Borrow + reader + librarian
         $borrow = DB::table('borrow_transactions as bt')
             ->join('users as u', 'u.user_id', '=', 'bt.user_id')
             ->leftJoin('library_cards as lc', 'lc.user_id', '=', 'u.user_id')
@@ -85,7 +85,7 @@ class ReceiptService
 
         abort_if(!$borrow, 404, 'Phiếu mượn không tồn tại.');
 
-        // [2] Returned books with fine info
+        // [2] Returned books — barcode + title + overdue_days (no per-copy fee column)
         $returnedBooks = DB::table('borrow_details as bd')
             ->join('book_copies as bc', 'bc.copy_id', '=', 'bd.copy_id')
             ->join('books as b', 'b.book_id', '=', 'bc.book_id')
@@ -99,32 +99,42 @@ class ReceiptService
                 'bc.barcode',
                 'b.title',
                 'bd.return_date',
-                'bd.condition_return',
-                DB::raw('f.amount AS fine_amount'),
-                DB::raw('f.status AS fine_status'),
+                DB::raw('COALESCE(f.amount, 0) AS fine_amount'),
+                DB::raw('f.fine_id'),
             ])
             ->get();
 
-        // [3] Overdue days per book (PHP-layer: Carbon)
-        $due    = Carbon::parse($borrow->due_date)->startOfDay();
-        $today  = Carbon::today();
+        // [3] Overdue days per book + latest return date
+        $due        = Carbon::parse($borrow->due_date)->startOfDay();
         $returnDate = null;
 
         $returnedBooks->each(function ($book) use ($due, &$returnDate) {
-            $retDate        = Carbon::parse($book->return_date)->startOfDay();
-            $overdueDays    = $retDate->gt($due) ? (int) $retDate->diffInDays($due, true) : 0;
-            $book->overdue_days = $overdueDays;
-            $book->fine_amount  = (int) ($book->fine_amount ?? 0);
+            $retDate             = Carbon::parse($book->return_date)->startOfDay();
+            $book->overdue_days  = $retDate->gt($due) ? (int) $retDate->diffInDays($due, true) : 0;
+            $book->fine_amount   = (int) ($book->fine_amount ?? 0);
             if (!$returnDate || $retDate->gt(Carbon::parse($returnDate))) {
                 $returnDate = $retDate->format('d/m/Y');
             }
         });
 
-        $totalPenalty = $returnedBooks->sum('fine_amount');
+        // [4] Fine summary — total from fines table
+        $totalFine = (int) $returnedBooks->sum('fine_amount');
 
-        // [4] Settings
+        // [5] Paid amount — SUM of payments for fines of this borrow
+        $fineIds = $returnedBooks->filter(fn($b) => $b->fine_id)->pluck('fine_id')->toArray();
+
+        $paidAmount = 0;
+        if (!empty($fineIds)) {
+            $paidAmount = (int) DB::table('payments')
+                ->whereIn('fine_id', $fineIds)
+                ->sum('amount');
+        }
+
+        $unpaidAmount = max(0, $totalFine - $paidAmount);
+
+        // [6] Settings
         $settings = DB::table('system_settings')
-            ->whereIn('config_key', ['library_name', 'address', 'contact_phone', 'fine_per_day'])
+            ->whereIn('config_key', ['library_name', 'address', 'contact_phone'])
             ->pluck('config_value', 'config_key');
 
         $data = [
@@ -136,7 +146,9 @@ class ReceiptService
             ],
             'returnedBooks' => $returnedBooks,
             'returnDate'    => $returnDate ?? today()->format('d/m/Y'),
-            'totalPenalty'  => $totalPenalty,
+            'totalFine'     => $totalFine,
+            'paidAmount'    => $paidAmount,
+            'unpaidAmount'  => $unpaidAmount,
             'librarian'     => $borrow->librarian_name ?? 'Thủ thư',
             'libraryName'   => $settings['library_name'] ?? 'Thư Viện',
             'settings'      => $settings,

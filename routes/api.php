@@ -41,6 +41,11 @@ Route::get('v1/books/{bookId}/related', [PublicBookController::class, 'related']
 Route::get('v1/books/{bookId}/reviews', [PublicBookController::class, 'reviews']);
 Route::get('v1/books/{bookId}/review-permission', [PublicBookController::class, 'reviewPermission']);
 Route::post('v1/books/{bookId}/reviews', [PublicBookController::class, 'submitReview']);
+Route::get('v1/book-copies/print-labels', [App\Http\Controllers\Admin\BookCopyController::class, 'printLabels']);
+Route::get('v1/book-copies/export-excel', [App\Http\Controllers\Admin\BookCopyController::class, 'exportExcel']);
+Route::get('v1/book-copies/export-pdf', [App\Http\Controllers\Admin\BookCopyController::class, 'exportPdfReport']);
+Route::post('v1/book-copies/import', [App\Http\Controllers\Admin\BookCopyController::class, 'importCopies']);
+Route::get('v1/book-copies/summary-report', [App\Http\Controllers\Admin\BookCopyController::class, 'summaryReport']);
 
 Route::middleware(['auth:sanctum', 'role:admin,librarian'])->group(function () {
     Route::post('v1/books', [AdminBookController::class, 'store']);
@@ -62,6 +67,12 @@ Route::middleware(['auth:sanctum', 'role:admin,librarian'])->group(function () {
     Route::put('v1/authors/{id}', [App\Http\Controllers\Admin\AuthorController::class, 'update']);
     Route::delete('v1/authors/{id}', [App\Http\Controllers\Admin\AuthorController::class, 'destroy']);
     Route::post('v1/authors/{id}/restore', [App\Http\Controllers\Admin\AuthorController::class, 'restore']);
+
+    // Book copies management
+    Route::get('v1/book-copies', [App\Http\Controllers\Admin\BookCopyController::class, 'index']);
+    Route::post('v1/book-copies', [App\Http\Controllers\Admin\BookCopyController::class, 'store']);
+    Route::put('v1/book-copies/{id}', [App\Http\Controllers\Admin\BookCopyController::class, 'update']);
+    Route::delete('v1/book-copies/{id}', [App\Http\Controllers\Admin\BookCopyController::class, 'destroy']);
 });
 
 Route::get('v1/library-card/{userId}', [LibraryCardController::class, 'show']);
@@ -124,6 +135,8 @@ Route::middleware(['auth:sanctum', 'role:admin,librarian'])->prefix('private/v1'
         Route::post('/',              [BorrowTransactionController::class, 'store']);
         Route::get('/renew-list',     [RenewController::class, 'getRenewList']);
         Route::post('/renew',         [RenewController::class, 'renewBook']);
+        // PDF receipt — resource-first route (new pattern, backward compat)
+        Route::get('/{borrow_id}/receipt', [ReceiptController::class, 'checkoutReceipt']);
     });
 
     // Book Return (Check-in)
@@ -132,6 +145,8 @@ Route::middleware(['auth:sanctum', 'role:admin,librarian'])->prefix('private/v1'
         Route::get('/borrowed-books/{user_id}', [ReturnController::class, 'getBorrowedBooks']);
         Route::get('/validate/{barcode}',       [ReturnController::class, 'validateReturnCopy']);
         Route::post('/confirm',                 [ReturnController::class, 'confirmReturn']);
+        // PDF receipt — resource-first route (new pattern, backward compat)
+        Route::get('/{borrow_id}/receipt',      [ReceiptController::class, 'returnReceipt']);
     });
 
     // User history (read-only aggregation)
