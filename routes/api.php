@@ -111,11 +111,12 @@ Route::middleware(['auth:sanctum', 'role:admin,librarian'])->prefix('private/v1'
     Route::patch('/users/{id}', [App\Http\Controllers\Admin\UserController::class, 'update']);
     Route::delete('/users/{id}', [App\Http\Controllers\Admin\UserController::class, 'destroy']);
     Route::post('/users/{id}/reset-password', [App\Http\Controllers\Admin\UserController::class, 'resetPassword']);
-    
+
     // Librarian Management (List only for both admin and librarians)
     Route::get('/librarians', [App\Http\Controllers\Admin\LibrarianManagementController::class, 'index']);
 
-    // Reader borrow history for both admin and librarians
+    // Reader list + borrow history — accessible by both admin and librarians
+    Route::get('/readers', [App\Http\Controllers\Admin\ReaderManagementController::class, 'index']);
     Route::get('/readers/{id}/borrow-history', [App\Http\Controllers\Admin\ReaderManagementController::class, 'borrowHistory']);
 
     // Access Audit Logs (Login Logs) for both admin and librarians
@@ -179,8 +180,7 @@ Route::middleware(['auth:sanctum', 'role:admin'])->prefix('private/v1')->group(f
     Route::delete('/librarians/{id}', [App\Http\Controllers\Admin\LibrarianManagementController::class, 'destroy']);
     Route::post('/librarians/{id}/reset-password', [App\Http\Controllers\Admin\LibrarianManagementController::class, 'resetPassword']);
 
-    // Reader Management Routes
-    Route::get('/readers', [App\Http\Controllers\Admin\ReaderManagementController::class, 'index']);
+    // Reader Management Routes (write actions — admin only)
     Route::patch('/readers/{id}/status', [App\Http\Controllers\Admin\ReaderManagementController::class, 'toggleStatus']);
     Route::post('/readers/{id}/reset-password', [App\Http\Controllers\Admin\ReaderManagementController::class, 'resetPassword']);
 
