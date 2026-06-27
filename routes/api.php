@@ -88,17 +88,23 @@ Route::prefix('v1/profile')->group(function () {
     Route::put('/{userId}',         [ProfileController::class, 'update']);
     Route::post('/{userId}/avatar', [ProfileController::class, 'updateAvatar']);
 });
+    Route::post(
+        'v1/reservations',
+        [ReservationController::class, 'reserveBook']
+    );
 Route::middleware('auth:sanctum')->prefix('v1/me')->group(function () {
     Route::get('/borrowing', [BorrowingController::class, 'index']);
     Route::get('/borrowing/history', [BorrowingController::class, 'history']);
     Route::post('/borrowing/{borrowId}/renew', [BorrowingController::class, 'renew']);
-    Route::get('/reservations', [ReservationController::class, 'index']);
-    Route::delete('/reservations/{reservationId}', [ReservationController::class, 'cancel']);
     Route::get('/fines', [FineController::class, 'index']);
     Route::get('/wishlist',                 [WishlistController::class, 'index']);
     Route::post('/wishlist',                [WishlistController::class, 'store']);
     Route::patch('/wishlist/{wishlistId}',  [WishlistController::class, 'update']);
     Route::delete('/wishlist/{wishlistId}', [WishlistController::class, 'destroy']);
+
+    Route::get('/reservations', [ReservationController::class, 'index']);
+    Route::post('/reservations', [ReservationController::class, 'store']);
+    Route::delete('/reservations/{reservationId}', [ReservationController::class, 'cancel']);
     Route::get('/recommendations',                   [RecommendationController::class, 'index']);
     Route::get('/recommendations/collaborative',     [RecommendationController::class, 'collaborative']);
     Route::post('/favorites/share',                  [WishlistController::class, 'share']);

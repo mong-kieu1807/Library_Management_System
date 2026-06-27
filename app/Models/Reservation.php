@@ -6,24 +6,31 @@ use Illuminate\Database\Eloquent\Model;
 
 class Reservation extends Model
 {
+    protected $table = 'reservations';
+
+    protected $primaryKey = 'reservation_id';
+
+    public $incrementing = true;
+    public $timestamps = false;
+
+    protected $fillable = [
+        'user_id',
+        'book_id',
+        'queue_position',
+        'status',
+        'notified_at',
+        'expired_at',
+        'created_at'
+    ];
+
     public function user()
     {
-        return $this->belongsTo(User::class);
+        return $this->belongsTo(User::class, 'user_id');
     }
 
     public function book()
     {
-        return $this->belongsTo(Book::class);
+        return $this->belongsTo(Book::class, 'book_id');
     }
-    protected $primaryKey = 'reservation_id';
-    public $incrementing = true;
-    protected $fillable = [
-    'user_id',
-    'book_id',
-    'queue_position',
-    'status',
-    'notified_at',
-    'expired_at',
-    'created_at',
-    ];
+    
 }
