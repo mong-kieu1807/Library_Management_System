@@ -20,7 +20,7 @@ class ReaderManagementController extends Controller
         $cardType = ($card && $card->borrow_limit > 5) ? 'premium' : 'regular';
         $cardNumber = $card ? $card->card_number : '—';
         
-        $borrowingCount = $user->borrowTransactions()->where('status', 'active')->count();
+        $borrowingCount = $user->borrowTransactions()->where('status', 'borrowing')->count();
         $overdueCount = $user->borrowTransactions()->where('status', 'overdue')->count();
 
         return [

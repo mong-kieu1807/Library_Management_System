@@ -41,15 +41,16 @@ Route::get('v1/books/{bookId}/related', [PublicBookController::class, 'related']
 Route::get('v1/books/{bookId}/reviews', [PublicBookController::class, 'reviews']);
 Route::get('v1/books/{bookId}/review-permission', [PublicBookController::class, 'reviewPermission']);
 Route::post('v1/books/{bookId}/reviews', [PublicBookController::class, 'submitReview']);
+// Browser-navigation routes (window.open / download link) — Sanctum token cannot be sent via header
+// from plain browser navigation, so these remain outside token-auth middleware.
 Route::get('v1/book-copies/print-labels', [App\Http\Controllers\Admin\BookCopyController::class, 'printLabels']);
 Route::get('v1/book-copies/export-excel', [App\Http\Controllers\Admin\BookCopyController::class, 'exportExcel']);
 Route::get('v1/book-copies/export-pdf', [App\Http\Controllers\Admin\BookCopyController::class, 'exportPdfReport']);
-Route::post('v1/book-copies/import', [App\Http\Controllers\Admin\BookCopyController::class, 'importCopies']);
-Route::get('v1/book-copies/summary-report', [App\Http\Controllers\Admin\BookCopyController::class, 'summaryReport']);
 
 Route::middleware(['auth:sanctum', 'role:admin,librarian'])->group(function () {
     Route::post('v1/books', [AdminBookController::class, 'store']);
     Route::get('v1/books/isbn/{isbn}', [AdminBookController::class, 'fetchByISBN']);
+    Route::get('v1/books/{bookId}/admin-detail', [AdminBookController::class, 'show']);
     Route::put('v1/books/{bookId}', [AdminBookController::class, 'update']);
     Route::delete('v1/books/{bookId}', [AdminBookController::class, 'destroy']);
 
@@ -73,25 +74,26 @@ Route::middleware(['auth:sanctum', 'role:admin,librarian'])->group(function () {
     Route::post('v1/book-copies', [App\Http\Controllers\Admin\BookCopyController::class, 'store']);
     Route::put('v1/book-copies/{id}', [App\Http\Controllers\Admin\BookCopyController::class, 'update']);
     Route::delete('v1/book-copies/{id}', [App\Http\Controllers\Admin\BookCopyController::class, 'destroy']);
+    Route::post('v1/book-copies/import', [App\Http\Controllers\Admin\BookCopyController::class, 'importCopies']);
+    Route::get('v1/book-copies/summary-report', [App\Http\Controllers\Admin\BookCopyController::class, 'summaryReport']);
 });
 
 Route::get('v1/library-card/{userId}', [LibraryCardController::class, 'show']);
 
 Route::prefix('v1/profile')->group(function () {
-    // Change-password: specific literals BEFORE {userId} wildcard
-    // Auth is handled in controller via PersonalAccessToken::findToken (same pattern as logout)
+    // Change-password: auth handled in controller via PersonalAccessToken::findToken
     Route::post('/change-password/request', [ProfileController::class, 'requestChangePassword']);
     Route::post('/change-password/verify',  [ProfileController::class, 'verifyChangePassword']);
 
-    // Wildcard routes — no auth middleware (userId in URL, legacy)
-    Route::get('/{userId}',         [ProfileController::class, 'show']);
-    Route::put('/{userId}',         [ProfileController::class, 'update']);
-    Route::post('/{userId}/avatar', [ProfileController::class, 'updateAvatar']);
+    // Public read — show profile (GET only, read-only)
+    Route::get('/{userId}', [ProfileController::class, 'show']);
+
+    // Write actions — must be authenticated
+    Route::middleware('auth:sanctum')->group(function () {
+        Route::put('/{userId}',         [ProfileController::class, 'update']);
+        Route::post('/{userId}/avatar', [ProfileController::class, 'updateAvatar']);
+    });
 });
-    Route::post(
-        'v1/reservations',
-        [ReservationController::class, 'reserveBook']
-    );
 Route::middleware('auth:sanctum')->prefix('v1/me')->group(function () {
     Route::get('/borrowing', [BorrowingController::class, 'index']);
     Route::get('/borrowing/history', [BorrowingController::class, 'history']);
@@ -136,8 +138,6 @@ Route::middleware(['auth:sanctum', 'role:admin,librarian'])->prefix('private/v1'
         Route::post('/',              [BorrowTransactionController::class, 'store']);
         Route::get('/renew-list',     [RenewController::class, 'getRenewList']);
         Route::post('/renew',         [RenewController::class, 'renewBook']);
-        // PDF receipt — resource-first route (new pattern, backward compat)
-        Route::get('/{borrow_id}/receipt', [ReceiptController::class, 'checkoutReceipt']);
     });
 
     // Book Return (Check-in)
@@ -146,8 +146,6 @@ Route::middleware(['auth:sanctum', 'role:admin,librarian'])->prefix('private/v1'
         Route::get('/borrowed-books/{user_id}', [ReturnController::class, 'getBorrowedBooks']);
         Route::get('/validate/{barcode}',       [ReturnController::class, 'validateReturnCopy']);
         Route::post('/confirm',                 [ReturnController::class, 'confirmReturn']);
-        // PDF receipt — resource-first route (new pattern, backward compat)
-        Route::get('/{borrow_id}/receipt',      [ReceiptController::class, 'returnReceipt']);
     });
 
     // User history (read-only aggregation)

@@ -46,6 +46,12 @@ class ProfileController extends Controller
 
     public function update(Request $request, int $userId)
     {
+        $authUser = $request->user();
+        $roleName = $authUser?->role?->role_name;
+        if ($authUser && (int) $authUser->getKey() !== $userId && $roleName !== 'admin') {
+            return response()->json(['message' => 'Bạn không có quyền cập nhật hồ sơ của người dùng khác.'], 403);
+        }
+
         $user = User::find($userId);
 
         if (!$user) {
@@ -68,6 +74,12 @@ class ProfileController extends Controller
 
     public function updateAvatar(Request $request, int $userId)
     {
+        $authUser = $request->user();
+        $roleName = $authUser?->role?->role_name;
+        if ($authUser && (int) $authUser->getKey() !== $userId && $roleName !== 'admin') {
+            return response()->json(['message' => 'Bạn không có quyền cập nhật ảnh đại diện của người dùng khác.'], 403);
+        }
+
         $user = User::find($userId);
 
         if (!$user) {

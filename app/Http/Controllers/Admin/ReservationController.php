@@ -68,6 +68,18 @@ class ReservationController extends Controller
         $userId     = (int) $request->input('user_id');
         $bookId     = (int) $request->input('book_id');
 
+        // [0] Validate library card
+        $card = DB::table('library_cards')->where('user_id', $userId)->first();
+        if (!$card) {
+            return response()->json(['code' => 422, 'message' => 'Độc giả chưa có thẻ thư viện.'], 422);
+        }
+        if ((int) $card->status === 0) {
+            return response()->json(['code' => 422, 'message' => 'Thẻ thư viện đã bị khóa.'], 422);
+        }
+        if ($card->expiry_date < now()->toDateString()) {
+            return response()->json(['code' => 422, 'message' => 'Thẻ thư viện đã hết hạn.'], 422);
+        }
+
         // [1] Check available copies
         $availableCount = DB::table('book_copies')
             ->where('book_id', $bookId)
@@ -241,14 +253,20 @@ class ReservationController extends Controller
                     ->first();
 
                 // [2] VALIDATE reservation
+                if (!$reservation) {
+                    throw new \RuntimeException('INVALID:Phiếu đặt trước không tồn tại.');
+                }
+                if (!$copy) {
+                    throw new \RuntimeException('INVALID:Bản sao không tồn tại trong hệ thống.');
+                }
                 if (!in_array($reservation->status, ['waiting', 'ready'])) {
-                    throw new \RuntimeException('INVALID:reservation not active (status=' . $reservation->status . ')');
+                    throw new \RuntimeException('INVALID:Phiếu đặt trước không còn hợp lệ (trạng thái: ' . $reservation->status . ').');
                 }
                 if ((int) $copy->book_id !== (int) $reservation->book_id) {
-                    throw new \RuntimeException('INVALID:copy does not belong to reservation book');
+                    throw new \RuntimeException('INVALID:Bản sao này không thuộc sách được đặt trước.');
                 }
                 if ($copy->status !== 'available') {
-                    throw new \RuntimeException('INVALID:copy not available (status=' . $copy->status . ')');
+                    throw new \RuntimeException('INVALID:Bản sao này không sẵn sàng để cho mượn (trạng thái: ' . $copy->status . ').');
                 }
 
                 $userId = (int) $reservation->user_id;
@@ -319,7 +337,7 @@ class ReservationController extends Controller
             if (str_starts_with($msg, 'INVALID:')) {
                 return response()->json([
                     'code'    => 422,
-                    'message' => 'Phiếu đặt trước hoặc bản sao không hợp lệ.',
+                    'message' => substr($msg, strlen('INVALID:')),
                 ], 422);
             }
             if (str_starts_with($msg, 'BORROW_LIMIT:')) {

@@ -150,8 +150,6 @@ class AuthController extends Controller
             ], 403);
         }
 
-        // Generate Sanctum access token
-        $token = $user->createToken("{$roleName}-token")->plainTextToken;
         // Check if user is an admin - Admin MUST use 2FA (only if the 'google2fa_secret' column exists in the database)
         if ($roleName === 'admin' && \Illuminate\Support\Facades\Schema::hasColumn('users', 'google2fa_secret')) {
             $isSetup = empty($user->google2fa_secret);
@@ -184,16 +182,7 @@ class AuthController extends Controller
             ]);
         }
 
-        // Generate Sanctum access token for non-admins (Librarians, Readers, etc.)
-        // Ensure personal_access_tokens table is present
-        if (!\Illuminate\Support\Facades\Schema::hasTable('personal_access_tokens')) {
-            \Illuminate\Support\Facades\Artisan::call('migrate', [
-                '--path' => 'database/migrations/2026_06_18_122439_create_personal_access_tokens_table.php',
-                '--force' => true
-            ]);
-        }
-        
-        $token = $user->createToken('admin-token')->plainTextToken;
+        $token = $user->createToken("{$roleName}-token")->plainTextToken;
 
         // Log successful login
         $this->logLoginAttempt($credentials['email'], $user->user_id, 'success');
@@ -237,14 +226,6 @@ class AuthController extends Controller
 
         // Delete temporary token
         $user->currentAccessToken()->delete();
-
-        // Ensure personal_access_tokens table exists
-        if (!\Illuminate\Support\Facades\Schema::hasTable('personal_access_tokens')) {
-            \Illuminate\Support\Facades\Artisan::call('migrate', [
-                '--path' => 'database/migrations/2026_06_18_122439_create_personal_access_tokens_table.php',
-                '--force' => true
-            ]);
-        }
 
         // Generate final full-access token
         $token = $user->createToken('admin-token')->plainTextToken;

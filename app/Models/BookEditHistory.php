@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 class BookEditHistory extends Model
 {
     protected $primaryKey = 'history_id';
+    public $timestamps = false;
 
     public function user()
     {
