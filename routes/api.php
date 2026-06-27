@@ -3,6 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\Auth\ForgotPasswordController;
+use App\Http\Controllers\Auth\GoogleAuthController;
 use App\Http\Controllers\LibraryCardController;
 use App\Http\Controllers\BookController;
 use App\Http\Controllers\BorrowingController;
@@ -28,6 +29,8 @@ Route::prefix('v1/auth')->group(function () {
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::post('/forgot-password', [ForgotPasswordController::class, 'sendResetLink']);
     Route::post('/reset-password', [ForgotPasswordController::class, 'resetPassword']);
+    Route::get('/google',          [GoogleAuthController::class, 'redirect']);
+    Route::get('/google/callback', [GoogleAuthController::class, 'callback']);
 });
 
 Route::get('v1/public/shared/favorites/{token}', [WishlistController::class, 'publicView']);
