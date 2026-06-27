@@ -28,6 +28,11 @@ class GoogleAuthController extends Controller
             return redirect($errorBase . 'oauth_failed');
         }
 
+        // Case 4: Google account has no email (rare — Workspace privacy setting)
+        if (!$googleUser->getEmail()) {
+            return redirect($errorBase . 'email_required');
+        }
+
         try {
             $user = DB::transaction(function () use ($googleUser) {
                 // Find by google_id first, then by email
@@ -102,6 +107,6 @@ class GoogleAuthController extends Controller
             // Non-critical — don't fail the login on log error
         }
 
-        return redirect("{$frontendUrl}/auth/google/callback?token={$token}");
+        return redirect("{$frontendUrl}/auth/google/callback?token={$token}&user_id={$user->user_id}");
     }
 }
