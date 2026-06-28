@@ -20,6 +20,7 @@ use App\Http\Controllers\Admin\RenewController;
 use App\Http\Controllers\Admin\ReservationController as AdminReservationController;
 use App\Http\Controllers\Admin\ReceiptController;
 use App\Http\Controllers\Admin\HistoryController;
+use App\Http\Controllers\AIController;
 
 
 Route::prefix('v1/auth')->group(function () {
@@ -34,6 +35,8 @@ Route::prefix('v1/auth')->group(function () {
     Route::get('/verify-email',         [AuthController::class, 'verifyEmail']);
     Route::post('/resend-verification', [AuthController::class, 'resendVerification']);
 });
+
+Route::post('v1/ai/chat', [AIController::class, 'chat']);
 
 Route::get('v1/public/shared/favorites/{token}', [WishlistController::class, 'publicView']);
 
