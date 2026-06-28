@@ -130,6 +130,6 @@ class GoogleAuthController extends Controller
             ]);
         }
 
-        return redirect("{$frontendUrl}/auth/google/callback?token={$token}&user_id={$user->user_id}");
+        return redirect("{$frontendUrl}/auth/google/callback?token={$token}&user_id={$user->user_id}&role={$roleName}");
     }
 }

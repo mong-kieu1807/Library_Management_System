@@ -58,33 +58,11 @@ class AuthController extends Controller
             return $user;
         });
 
-        $token = $user->createToken('reader-token')->plainTextToken;
-
         $this->sendVerificationEmail($user);
 
-        $userData = [
-            'id'          => (string) $user->user_id,
-            'name'        => $user->full_name,
-            'email'       => $user->email,
-            'role'        => $readerRole->role_name,
-            'phone'       => $user->phone,
-            'avatar'      => $user->avatar_url,
-            'status'      => [
-                'value' => (string) $user->status,
-                'label' => $user->status === 1 ? 'Active' : 'Inactive',
-            ],
-            'achievement' => null,
-            'createdAt'   => $user->created_at ? $user->created_at->toIso8601String() : null,
-            'updatedAt'   => $user->updated_at ? $user->updated_at->toIso8601String() : null,
-        ];
-
         return response()->json([
-            'results' => [
-                'object' => [
-                    'accessToken' => $token,
-                    'user'        => $userData,
-                ]
-            ]
+            'success' => true,
+            'message' => 'Đăng ký thành công. Vui lòng kiểm tra email để xác minh tài khoản.',
         ]);
     }
 
@@ -155,6 +133,14 @@ class AuthController extends Controller
             $this->logLoginAttempt($credentials['email'], $user->user_id, 'failed', 'Tài khoản đã bị khoá.');
             return response()->json([
                 'message' => 'Tài khoản của bạn đã bị khoá.',
+            ], 403);
+        }
+
+        // Block login if email has not been verified
+        if (!$user->email_verified_at) {
+            return response()->json([
+                'message' => 'Vui lòng xác minh email trước khi đăng nhập.',
+                'error'   => 'email_not_verified',
             ], 403);
         }
 
@@ -387,14 +373,30 @@ class AuthController extends Controller
             return response()->json(['message' => 'Tài khoản không tồn tại.', 'error' => 'not_found'], 404);
         }
 
+        $roleName = $user->role ? $user->role->role_name : 'reader';
+
         if ($user->email_verified_at) {
-            return response()->json(['message' => 'Email đã được xác minh trước đó.', 'error' => 'already_verified']);
+            $autoToken = $user->createToken("{$roleName}-token")->plainTextToken;
+            return response()->json([
+                'message' => 'Email đã được xác minh trước đó.',
+                'error'   => 'already_verified',
+                'token'   => $autoToken,
+                'user_id' => $user->user_id,
+                'role'    => $roleName,
+            ]);
         }
 
         $user->email_verified_at = now();
         $user->save();
 
-        return response()->json(['message' => 'Email đã được xác minh thành công.', 'success' => true]);
+        $autoToken = $user->createToken("{$roleName}-token")->plainTextToken;
+        return response()->json([
+            'message' => 'Email đã được xác minh thành công.',
+            'success' => true,
+            'token'   => $autoToken,
+            'user_id' => $user->user_id,
+            'role'    => $roleName,
+        ]);
     }
 
     public function resendVerification(Request $request)
