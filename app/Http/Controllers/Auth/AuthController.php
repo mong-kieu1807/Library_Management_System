@@ -10,6 +10,8 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\RateLimiter;
 
 class AuthController extends Controller
 {
@@ -39,7 +41,11 @@ class AuthController extends Controller
                 'status'    => 1,
             ]);
 
+            // [HOTFIX] TiDB: card_id không auto-increment — tự sinh ID
+            $nextCardId = (int) (DB::table('library_cards')->lockForUpdate()->max('card_id') ?? 0) + 1;
+            \Illuminate\Support\Facades\Log::debug('[LibraryCard Hotfix] Generated card_id = ' . $nextCardId);
             DB::table('library_cards')->insert([
+                'card_id'         => $nextCardId,
                 'user_id'         => $user->user_id,
                 'card_number'     => 'TV' . str_pad($user->user_id, 4, '0', STR_PAD_LEFT),
                 'issue_date'      => Carbon::today(),
@@ -53,6 +59,8 @@ class AuthController extends Controller
         });
 
         $token = $user->createToken('reader-token')->plainTextToken;
+
+        $this->sendVerificationEmail($user);
 
         $userData = [
             'id'          => (string) $user->user_id,
@@ -305,5 +313,113 @@ class AuthController extends Controller
         } catch (\Throwable $e) {
             \Illuminate\Support\Facades\Log::error("Failed to log login attempt: " . $e->getMessage());
         }
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // Email verification
+    // ──────────────────────────────────────────────────────────────
+
+    private function generateVerifyToken(string $email): string
+    {
+        $payload = base64_encode(json_encode([
+            'email'      => $email,
+            'expires_at' => now()->addHours(24)->timestamp,
+        ]));
+        $sig = hash_hmac('sha256', $payload, config('app.key'));
+        return $payload . '.' . $sig;
+    }
+
+    private function sendVerificationEmail(User $user): void
+    {
+        try {
+            $token      = $this->generateVerifyToken($user->email);
+            $frontendUrl = rtrim(env('FRONTEND_URL', 'http://localhost:3000'), '/');
+            $verifyUrl  = "{$frontendUrl}/auth/verify-email?token=" . urlencode($token);
+
+            Mail::raw(
+                "Xin chào {$user->full_name},\n\n"
+                . "Vui lòng xác minh địa chỉ email của bạn bằng cách nhấn vào link bên dưới (hiệu lực 24 giờ):\n"
+                . "{$verifyUrl}\n\n"
+                . "Nếu bạn không đăng ký tài khoản này, hãy bỏ qua email này.",
+                function ($message) use ($user) {
+                    $message->to($user->email)
+                        ->subject('Xác minh địa chỉ email - The Library');
+                }
+            );
+        } catch (\Throwable $e) {
+            // Non-critical — registration succeeds even if email fails
+        }
+    }
+
+    public function verifyEmail(Request $request)
+    {
+        $token = $request->query('token');
+        if (!$token) {
+            return response()->json(['message' => 'Token không hợp lệ.', 'error' => 'invalid'], 422);
+        }
+
+        $parts = explode('.', $token, 2);
+        if (count($parts) !== 2) {
+            return response()->json(['message' => 'Token không hợp lệ.', 'error' => 'invalid'], 422);
+        }
+
+        [$payload, $sig] = $parts;
+        $expected = hash_hmac('sha256', $payload, config('app.key'));
+        if (!hash_equals($expected, $sig)) {
+            return response()->json(['message' => 'Token không hợp lệ.', 'error' => 'invalid'], 422);
+        }
+
+        $data = json_decode(base64_decode($payload), true);
+        if (!$data || empty($data['email']) || empty($data['expires_at'])) {
+            return response()->json(['message' => 'Token không hợp lệ.', 'error' => 'invalid'], 422);
+        }
+
+        if ($data['expires_at'] < now()->timestamp) {
+            return response()->json([
+                'message' => 'Link xác minh đã hết hạn.',
+                'error'   => 'expired',
+                'email'   => $data['email'],
+            ], 422);
+        }
+
+        $user = User::where('email', $data['email'])->first();
+        if (!$user) {
+            return response()->json(['message' => 'Tài khoản không tồn tại.', 'error' => 'not_found'], 404);
+        }
+
+        if ($user->email_verified_at) {
+            return response()->json(['message' => 'Email đã được xác minh trước đó.', 'error' => 'already_verified']);
+        }
+
+        $user->email_verified_at = now();
+        $user->save();
+
+        return response()->json(['message' => 'Email đã được xác minh thành công.', 'success' => true]);
+    }
+
+    public function resendVerification(Request $request)
+    {
+        $request->validate(['email' => 'required|email']);
+
+        $key = 'verify_resend:' . strtolower($request->email);
+        if (RateLimiter::tooManyAttempts($key, 3)) {
+            $seconds = RateLimiter::availableIn($key);
+            return response()->json([
+                'message' => "Vui lòng chờ {$seconds} giây trước khi gửi lại.",
+                'error'   => 'rate_limited',
+            ], 429);
+        }
+        RateLimiter::hit($key, 600);
+
+        $user = User::where('email', $request->email)->first();
+
+        if (!$user || $user->email_verified_at) {
+            // Don't reveal if email exists or is already verified
+            return response()->json(['message' => 'Nếu email tồn tại và chưa xác minh, link xác minh sẽ được gửi.']);
+        }
+
+        $this->sendVerificationEmail($user);
+
+        return response()->json(['message' => 'Nếu email tồn tại và chưa xác minh, link xác minh sẽ được gửi.']);
     }
 }

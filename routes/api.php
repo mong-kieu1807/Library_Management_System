@@ -31,6 +31,8 @@ Route::prefix('v1/auth')->group(function () {
     Route::post('/reset-password', [ForgotPasswordController::class, 'resetPassword']);
     Route::get('/google',          [GoogleAuthController::class, 'redirect']);
     Route::get('/google/callback', [GoogleAuthController::class, 'callback']);
+    Route::get('/verify-email',         [AuthController::class, 'verifyEmail']);
+    Route::post('/resend-verification', [AuthController::class, 'resendVerification']);
 });
 
 Route::get('v1/public/shared/favorites/{token}', [WishlistController::class, 'publicView']);

@@ -7,6 +7,7 @@ use App\Models\Role;
 use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Laravel\Socialite\Facades\Socialite;
 
@@ -25,6 +26,13 @@ class GoogleAuthController extends Controller
         try {
             $googleUser = Socialite::driver('google')->stateless()->user();
         } catch (\Throwable $e) {
+            Log::error('[GoogleAuth] Socialite user() failed', [
+                'exception' => get_class($e),
+                'message'   => $e->getMessage(),
+                'file'      => $e->getFile(),
+                'line'      => $e->getLine(),
+                'query'     => request()->query(),
+            ]);
             return redirect($errorBase . 'oauth_failed');
         }
 
@@ -63,7 +71,11 @@ class GoogleAuthController extends Controller
                     $user->avatar_url        = $googleUser->getAvatar();
                     $user->save();
 
+                    // [HOTFIX] TiDB: card_id không auto-increment — tự sinh ID
+                    $nextCardId = (int) (DB::table('library_cards')->lockForUpdate()->max('card_id') ?? 0) + 1;
+                    Log::debug('[LibraryCard Hotfix] Generated card_id = ' . $nextCardId);
                     DB::table('library_cards')->insert([
+                        'card_id'         => $nextCardId,
                         'user_id'         => $user->user_id,
                         'card_number'     => 'TV' . str_pad($user->user_id, 4, '0', STR_PAD_LEFT),
                         'issue_date'      => Carbon::today(),
@@ -77,6 +89,14 @@ class GoogleAuthController extends Controller
                 return $user;
             });
         } catch (\Throwable $e) {
+            Log::error('[GoogleAuth] DB transaction failed', [
+                'exception'    => get_class($e),
+                'message'      => $e->getMessage(),
+                'file'         => $e->getFile(),
+                'line'         => $e->getLine(),
+                'google_email' => isset($googleUser) ? $googleUser->getEmail() : 'unknown',
+                'google_id'    => isset($googleUser) ? $googleUser->getId()    : 'unknown',
+            ]);
             return redirect($errorBase . 'server_error');
         }
 
@@ -104,7 +124,10 @@ class GoogleAuthController extends Controller
                 'login_time'     => now(),
             ]);
         } catch (\Throwable $e) {
-            // Non-critical — don't fail the login on log error
+            Log::warning('[GoogleAuth] LoginLog create failed', [
+                'exception' => get_class($e),
+                'message'   => $e->getMessage(),
+            ]);
         }
 
         return redirect("{$frontendUrl}/auth/google/callback?token={$token}&user_id={$user->user_id}");
