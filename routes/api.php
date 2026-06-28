@@ -20,6 +20,7 @@ use App\Http\Controllers\Admin\RenewController;
 use App\Http\Controllers\Admin\ReservationController as AdminReservationController;
 use App\Http\Controllers\Admin\ReceiptController;
 use App\Http\Controllers\Admin\HistoryController;
+use App\Http\Controllers\Admin\ReportController;
 
 
 Route::prefix('v1/auth')->group(function () {
@@ -51,6 +52,9 @@ Route::post('v1/books/{bookId}/reviews', [PublicBookController::class, 'submitRe
 Route::get('v1/book-copies/print-labels', [App\Http\Controllers\Admin\BookCopyController::class, 'printLabels']);
 Route::get('v1/book-copies/export-excel', [App\Http\Controllers\Admin\BookCopyController::class, 'exportExcel']);
 Route::get('v1/book-copies/export-pdf', [App\Http\Controllers\Admin\BookCopyController::class, 'exportPdfReport']);
+// Receipt PDF — same pattern as book-copies exports: window.open() cannot send Authorization header
+Route::get('private/v1/receipt/checkout/{borrow_id}', [ReceiptController::class, 'checkoutReceipt']);
+Route::get('private/v1/receipt/return/{borrow_id}',   [ReceiptController::class, 'returnReceipt']);
 
 Route::middleware(['auth:sanctum', 'role:admin,librarian'])->group(function () {
     Route::post('v1/books', [AdminBookController::class, 'store']);
@@ -165,12 +169,6 @@ Route::middleware(['auth:sanctum', 'role:admin,librarian'])->prefix('private/v1'
     Route::get('/dashboard/top-books', [App\Http\Controllers\Admin\DashboardController::class, 'getTopBooks']);
     Route::get('/dashboard/overdue',   [App\Http\Controllers\Admin\DashboardController::class, 'getOverdueList']);
 
-    // PDF Receipts
-    Route::prefix('receipt')->group(function () {
-        Route::get('/checkout/{borrow_id}', [ReceiptController::class, 'checkoutReceipt']);
-        Route::get('/return/{borrow_id}',   [ReceiptController::class, 'returnReceipt']);
-    });
-
     // Reservation (Đặt trước sách)
     Route::prefix('reservation')->group(function () {
         Route::get('/search-book',  [AdminReservationController::class, 'searchBook']);
@@ -180,6 +178,14 @@ Route::middleware(['auth:sanctum', 'role:admin,librarian'])->prefix('private/v1'
         Route::post('/cancel',      [AdminReservationController::class, 'cancelReservation']);
         Route::post('/expire',      [AdminReservationController::class, 'expireReservations']);
     });
+});
+
+// Module 6 — Báo cáo & Thống kê
+Route::middleware(['auth:sanctum', 'role:admin,librarian'])->prefix('private/v1/reports')->group(function () {
+    Route::get('/transactions',          [ReportController::class, 'transactions']);          // Phase 1
+    Route::get('/top-books',             [ReportController::class, 'topBooks']);              // Phase 2
+    Route::get('/top-readers',           [ReportController::class, 'topReaders']);            // Phase 3A
+    Route::get('/reader-registrations',  [ReportController::class, 'readerRegistrations']);  // Phase 3B
 });
 
 Route::middleware(['auth:sanctum', 'role:admin'])->prefix('private/v1')->group(function () {
