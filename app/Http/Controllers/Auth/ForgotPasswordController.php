@@ -68,7 +68,7 @@ class ForgotPasswordController extends Controller
         $request->validate([
             'token'                 => 'required|string',
             'email'                 => 'required|email',
-            'password'              => 'required|string|min:8|confirmed',
+            'password'              => ['required', 'string', 'confirmed', new \App\Rules\StrongPassword()],
             'password_confirmation' => 'required',
         ]);
 

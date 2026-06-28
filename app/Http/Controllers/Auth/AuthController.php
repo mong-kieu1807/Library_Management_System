@@ -20,7 +20,7 @@ class AuthController extends Controller
         $request->validate([
             'full_name'             => 'required|string|max:150',
             'email'                 => 'required|email|unique:users,email',
-            'password'              => 'required|string|min:8|confirmed',
+            'password'              => ['required', 'string', 'confirmed', new \App\Rules\StrongPassword()],
             'password_confirmation' => 'required',
         ]);
 

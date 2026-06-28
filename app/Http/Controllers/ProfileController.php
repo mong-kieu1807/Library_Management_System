@@ -115,7 +115,7 @@ class ProfileController extends Controller
 
         $request->validate([
             'current_password'          => 'required|string',
-            'new_password'              => 'required|string|min:8|confirmed',
+            'new_password'              => ['required', 'string', 'confirmed', new \App\Rules\StrongPassword()],
             'new_password_confirmation' => 'required',
         ]);
 
@@ -166,7 +166,7 @@ class ProfileController extends Controller
 
         $request->validate([
             'otp'                       => 'required|string',
-            'new_password'              => 'required|string|min:8|confirmed',
+            'new_password'              => ['required', 'string', 'confirmed', new \App\Rules\StrongPassword()],
             'new_password_confirmation' => 'required',
         ]);
 
