@@ -22,6 +22,7 @@ use App\Http\Controllers\Admin\ReceiptController;
 use App\Http\Controllers\Admin\HistoryController;
 use App\Http\Controllers\AIController;
 use App\Http\Controllers\Admin\ReportController;
+use App\Http\Controllers\Admin\ExportController;
 
 
 Route::prefix('v1/auth')->group(function () {
@@ -58,6 +59,16 @@ Route::get('v1/book-copies/export-pdf', [App\Http\Controllers\Admin\BookCopyCont
 // Receipt PDF — same pattern as book-copies exports: window.open() cannot send Authorization header
 Route::get('private/v1/receipt/checkout/{borrow_id}', [ReceiptController::class, 'checkoutReceipt']);
 Route::get('private/v1/receipt/return/{borrow_id}',   [ReceiptController::class, 'returnReceipt']);
+
+// Report PDF exports — same window.open pattern (no auth header from browser navigation)
+Route::get('private/v1/reports/export/overdue-pdf',        [ExportController::class, 'overdueBooksPdf']);
+Route::get('private/v1/reports/export/transactions-pdf',   [ExportController::class, 'transactionsPdf']);
+Route::get('private/v1/reports/export/fine-report-pdf',    [ExportController::class, 'fineReportPdf']);
+// Report CSV/Excel exports — same no-auth pattern: window.open() / download link cannot send Bearer header
+Route::get('private/v1/reports/export/transactions-csv',   [ExportController::class, 'transactionsCsv']);
+Route::get('private/v1/reports/export/top-books-csv',      [ExportController::class, 'topBooksCsv']);
+Route::get('private/v1/reports/export/top-authors-csv',    [ExportController::class, 'topAuthorsCsv']);
+Route::get('private/v1/reports/export/top-categories-csv', [ExportController::class, 'topCategoriesCsv']);
 
 Route::middleware(['auth:sanctum', 'role:admin,librarian'])->group(function () {
     Route::post('v1/books', [AdminBookController::class, 'store']);
@@ -189,6 +200,12 @@ Route::middleware(['auth:sanctum', 'role:admin,librarian'])->prefix('private/v1/
     Route::get('/top-books',             [ReportController::class, 'topBooks']);              // Phase 2
     Route::get('/top-readers',           [ReportController::class, 'topReaders']);            // Phase 3A
     Route::get('/reader-registrations',  [ReportController::class, 'readerRegistrations']);  // Phase 3B
+    Route::get('/overdue-books',         [ReportController::class, 'overdueBooks']);          // Phase 4 (overdue)
+    Route::get('/overdue-summary',       [ReportController::class, 'overdueSummary']);        // Phase 4 (overdue)
+    Route::get('/top-authors',           [ReportController::class, 'topAuthors']);             // Phase 2 (authors)
+    Route::get('/top-categories',        [ReportController::class, 'topCategories']);          // Phase 2 (categories)
+    Route::get('/fine-revenue',          [ReportController::class, 'fineRevenue']);            // Phase 4 (fine)
+    Route::get('/fine-reasons',          [ReportController::class, 'fineReasons']);            // Phase 4 (fine)
 });
 
 Route::middleware(['auth:sanctum', 'role:admin'])->prefix('private/v1')->group(function () {
