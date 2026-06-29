@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use App\Services\AIAnalysisService;
 use App\Services\BookService;
@@ -28,30 +29,36 @@ class AIController extends Controller
         ]);
 
         $request->validate([
-            'message' => 'required|string|max:2000',
-            'history' => 'sometimes|array|max:20',
+            'message'    => 'required|string|max:2000',
+            'history'    => 'sometimes|array|max:20',
+            'session_id' => 'sometimes|string|max:64',
         ]);
 
-        $message = trim($request->input('message'));
-        $history = $request->input('history', []);
+        $message       = trim($request->input('message'));
+        $sessionId     = trim((string) $request->input('session_id', ''));
+        $serverHistory = $this->loadHistory($sessionId);
 
         // [STEP 1] Request received
         Log::info('[AI TRACE] STEP 1 - Request received', [
-            'message'       => $message,
-            'history_count' => count($history),
+            'message'        => $message,
+            'session_id'     => $sessionId ?: '(none)',
+            'server_history' => count($serverHistory),
         ]);
 
         // [AI DEBUG] REQUEST_BODY
         Log::info('[AI DEBUG] REQUEST_BODY', [
-            'message_bytes' => strlen($message),
-            'message_mb'    => mb_strlen($message),
-            'raw_preview'   => mb_substr($message, 0, 100),
-            'history_count' => count($history),
+            'message_bytes'  => strlen($message),
+            'message_mb'     => mb_strlen($message),
+            'raw_preview'    => mb_substr($message, 0, 100),
+            'server_history' => count($serverHistory),
         ]);
 
-        // Build Gemini contents from prior history + new user message
+        // Server-side session takes priority; fall back to client-sent history for backward compat
+        $historySource = !empty($serverHistory) ? $serverHistory : $request->input('history', []);
+
+        // Build Gemini contents from conversation history + new user message
         $contents = [];
-        foreach ($history as $h) {
+        foreach ($historySource as $h) {
             $role       = ($h['role'] === 'assistant') ? 'model' : 'user';
             $contents[] = ['role' => $role, 'parts' => [['text' => (string) $h['content']]]];
         }
@@ -113,13 +120,15 @@ class AIController extends Controller
                     'reply_length'  => strlen($reply),
                     'reply_preview' => mb_substr($reply, 0, 200),
                 ]);
+                $finalReply = $reply ?: 'Xin lỗi, tôi không thể trả lời lúc này.';
                 Log::info('[AI DEBUG] RETURN_JSON', [
                     'http_status'   => 200,
                     'path'          => 'no-tool',
-                    'reply_length'  => strlen($reply),
-                    'reply_preview' => mb_substr($reply ?: 'Xin lỗi, tôi không thể trả lời lúc này.', 0, 200),
+                    'reply_length'  => strlen($finalReply),
+                    'reply_preview' => mb_substr($finalReply, 0, 200),
                 ]);
-                return response()->json(['reply' => $reply ?: 'Xin lỗi, tôi không thể trả lời lúc này.']);
+                $this->saveHistory($sessionId, $serverHistory, $message, $finalReply);
+                return response()->json(['reply' => $finalReply]);
             }
 
             // Execute the first function call
@@ -205,14 +214,15 @@ class AIController extends Controller
             ]);
 
             // [AI DEBUG] RETURN_JSON
+            $finalReply = $reply ?: 'Xin lỗi, không có kết quả.';
             Log::info('[AI DEBUG] RETURN_JSON', [
                 'http_status'   => 200,
                 'path'          => 'with-tool',
-                'reply_length'  => strlen($reply),
-                'reply_preview' => mb_substr($reply ?: 'Xin lỗi, không có kết quả.', 0, 300),
+                'reply_length'  => strlen($finalReply),
+                'reply_preview' => mb_substr($finalReply, 0, 300),
             ]);
-
-            return response()->json(['reply' => $reply ?: 'Xin lỗi, không có kết quả.']);
+            $this->saveHistory($sessionId, $serverHistory, $message, $finalReply);
+            return response()->json(['reply' => $finalReply]);
         } catch (\Throwable $e) {
             if ($e->getCode() === 429) {
                 Log::info('[AI DEBUG] RATE_LIMIT_429', ['message' => $e->getMessage()]);
@@ -448,6 +458,44 @@ class AIController extends Controller
                 : "Sách \"{$book['title']}\" hiện không có bản nào để mượn.",
         ];
     }
+
+    // -------------------------------------------------------------------------
+    // M2-AI.7 — Server-side Conversation Memory (Cache-backed)
+    // -------------------------------------------------------------------------
+
+    private const HISTORY_LIMIT     = 10;
+    private const CACHE_KEY_PREFIX  = 'ai_session_';
+    private const CACHE_TTL_MINUTES = 120;
+
+    private function loadHistory(string $sessionId): array
+    {
+        if (strlen($sessionId) < 8) {
+            return [];
+        }
+        return Cache::get(self::CACHE_KEY_PREFIX . $sessionId, []);
+    }
+
+    private function saveHistory(string $sessionId, array $prior, string $userMsg, string $aiReply): void
+    {
+        if (strlen($sessionId) < 8) {
+            return;
+        }
+        $ts        = now()->timestamp;
+        $history   = $prior;
+        $history[] = ['role' => 'user',      'content' => $userMsg,  'timestamp' => $ts];
+        $history[] = ['role' => 'assistant', 'content' => $aiReply, 'timestamp' => $ts];
+
+        if (count($history) > self::HISTORY_LIMIT) {
+            $history = array_slice($history, -self::HISTORY_LIMIT);
+        }
+        Cache::put(
+            self::CACHE_KEY_PREFIX . $sessionId,
+            $history,
+            now()->addMinutes(self::CACHE_TTL_MINUTES)
+        );
+    }
+
+    // -------------------------------------------------------------------------
 
     private function toolGetLibraryPolicy(): array
     {
