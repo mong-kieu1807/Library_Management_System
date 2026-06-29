@@ -204,6 +204,68 @@ class AIController extends Controller
                 'parsed_types'  => array_column($parsed2, 'type'),
             ]);
 
+            // Round 3 — tool chain: if Round 2 returned another function call, execute and ask again
+            $functionCalls2 = array_values(array_filter($parsed2, fn ($p) => $p['type'] === 'functionCall'));
+
+            if (!empty($functionCalls2)) {
+                $call2 = $functionCalls2[0];
+
+                Log::info('[AI TRACE] STEP 8b - Round 2 returned tool call (chaining)', [
+                    'tool_name' => $call2['name'],
+                ]);
+
+                $toolResult2 = $this->executeTool($call2['name'], $call2['args']);
+
+                Log::info('[AI TRACE] STEP 8c - Round 2 chained tool result', [
+                    'tool'   => $call2['name'],
+                    'result' => $toolResult2,
+                ]);
+
+                $modelParts2 = array_map(fn ($p) => match ($p['type']) {
+                    'functionCall' => ['functionCall' => ['name' => $p['name'], 'args' => empty($p['args']) ? new \stdClass() : $p['args']]],
+                    default        => ['text' => $p['text']],
+                }, $parsed2);
+
+                $contents3   = $contents2;
+                $contents3[] = ['role' => 'model', 'parts' => $modelParts2];
+                $contents3[] = [
+                    'role'  => 'user',
+                    'parts' => [[
+                        'functionResponse' => [
+                            'name'     => $call2['name'],
+                            'response' => ['result' => $toolResult2],
+                        ],
+                    ]],
+                ];
+
+                Log::info('[AI DEBUG] CALL_AI_SERVICE Round3', [
+                    'turns'     => count($contents3),
+                    'tool_used' => $call2['name'],
+                ]);
+
+                $resp3   = $this->ai->generate($contents3, $tools, $systemPrompt);
+                $parts3  = $resp3['candidates'][0]['content']['parts'] ?? [];
+                $parsed3 = $this->ai->parseParts($parts3);
+
+                Log::info('[AI TRACE] STEP 9 - Final reply from Round 3', [
+                    'finish_reason' => $resp3['candidates'][0]['finishReason'] ?? 'unknown',
+                    'parts_count'   => count($parts3),
+                ]);
+
+                $textParts3 = array_filter($parsed3, fn ($p) => $p['type'] === 'text');
+                $reply3     = implode('', array_column(array_values($textParts3), 'text'));
+                $finalReply = $reply3 ?: 'Xin lỗi, không có kết quả.';
+
+                Log::info('[AI DEBUG] RETURN_JSON', [
+                    'http_status'   => 200,
+                    'path'          => 'with-tool-chain',
+                    'reply_length'  => strlen($finalReply),
+                    'reply_preview' => mb_substr($finalReply, 0, 300),
+                ]);
+                $this->saveHistory($sessionId, $serverHistory, $message, $finalReply);
+                return response()->json(['reply' => $finalReply]);
+            }
+
             $textParts = array_filter($parsed2, fn ($p) => $p['type'] === 'text');
             $reply     = implode('', array_column(array_values($textParts), 'text'));
 
@@ -303,7 +365,7 @@ class AIController extends Controller
             ],
             [
                 'name'        => 'get_book_detail',
-                'description' => 'Lấy thông tin chi tiết về một cuốn sách cụ thể theo book_id.',
+                'description' => 'Lấy thông tin chi tiết đầy đủ của một cuốn sách: mô tả nội dung, tác giả, thể loại, nhà xuất bản, ngôn ngữ, đánh giá và số bản có thể mượn. Gọi tool này khi người dùng muốn: giới thiệu sách, tóm tắt nội dung, biết sách phù hợp với ai, xem đánh giá, điểm nổi bật, hoặc thông tin chi tiết. Cũng gọi ngay sau khi search_books đã trả về book_id trong cùng phiên hội thoại.',
                 'parameters'  => [
                     'type'       => 'object',
                     'properties' => [
