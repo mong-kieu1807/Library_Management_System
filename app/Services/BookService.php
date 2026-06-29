@@ -216,13 +216,19 @@ class BookService
     public function getLibrarySettings(): array
     {
         $settings = DB::table('system_settings')
-            ->whereIn('config_key', ['max_books_per_user', 'max_borrow_days', 'fine_per_day'])
+            ->whereIn('config_key', ['max_books_per_user', 'max_borrow_days', 'fine_per_day', 'card_validity_months'])
             ->pluck('config_value', 'config_key');
 
-        return [
+        $result = [
             'borrow_limit'    => (int) ($settings['max_books_per_user'] ?? 5),
             'max_borrow_days' => (int) ($settings['max_borrow_days'] ?? 14),
             'fine_per_day'    => (int) ($settings['fine_per_day'] ?? 2000),
         ];
+
+        if ($settings->get('card_validity_months') !== null) {
+            $result['card_validity_months'] = (int) $settings->get('card_validity_months');
+        }
+
+        return $result;
     }
 }

@@ -11,7 +11,7 @@ class AIAnalysisService
 
     public function __construct()
     {
-        $this->apiKey   = config('services.gemini.key', '');
+        $this->apiKey   = config('services.gemini.key') ?? '';
         $model          = config('ai.model', 'gemini-2.5-flash');
         $this->endpoint = "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent";
     }
@@ -28,6 +28,10 @@ class AIAnalysisService
     {
         if (config('ai.mock_mode', false)) {
             return $this->mockGenerate($contents, $tools);
+        }
+
+        if ($this->apiKey === '') {
+            throw new \RuntimeException('Gemini API key is missing.');
         }
 
         $payload = ['contents' => $contents];
@@ -61,28 +65,39 @@ class AIAnalysisService
     /**
      * Return a deterministic mock response that exercises the full Function-Calling flow.
      *
-     * Round 1 (user message): returns a search_books functionCall using the user's message as query.
-     * Round 2 (functionResponse): returns a text reply summarising the search result.
+     * Round 1 (user message):
+     *   - Policy question → get_library_policy functionCall
+     *   - Otherwise       → search_books functionCall
+     * Round 2 (functionResponse): returns a text reply based on the tool result.
      */
     private function mockGenerate(array $contents, array $tools): array
     {
-        // Detect round by checking if the last content turn is a functionResponse
         $last     = end($contents);
         $lastPart = $last['parts'][0] ?? [];
 
         if (isset($lastPart['functionResponse'])) {
-            // Round 2 — build a friendly text based on the search result
-            $result     = $lastPart['functionResponse']['response']['result'] ?? [];
-            $found      = $result['found'] ?? false;
-            $count      = (int) ($result['count'] ?? 0);
-            $topic      = $result['topic'] ?? '';
-            $searched   = implode(', ', array_slice((array) ($result['searched'] ?? []), 0, 3));
+            // Round 2 — build reply from tool result
+            $toolName = $lastPart['functionResponse']['name'] ?? '';
+            $result   = $lastPart['functionResponse']['response']['result'] ?? [];
 
-            if ($found && $count > 0) {
-                $text = "[MOCK] Tìm thấy {$count} cuốn sách phù hợp. Đây là kết quả từ chế độ Mock — Gemini không được gọi.";
+            if ($toolName === 'get_library_policy') {
+                $limit = $result['borrow_limit']    ?? 5;
+                $days  = $result['max_borrow_days'] ?? 14;
+                $fine  = $result['fine_per_day']    ?? 2000;
+                $text  = "[MOCK] Quy định thư viện: Mượn tối đa {$limit} cuốn, thời hạn {$days} ngày, "
+                       . 'phí phạt ' . number_format((int) $fine, 0, ',', '.') . ' đồng/ngày.';
             } else {
-                $label = $topic ?: $searched ?: 'từ khóa đã cho';
-                $text  = "[MOCK] Thư viện hiện chưa có sách về \"{$label}\". Bạn có muốn thử từ khóa khác không?";
+                $found    = $result['found'] ?? false;
+                $count    = (int) ($result['count'] ?? 0);
+                $topic    = $result['topic'] ?? '';
+                $searched = implode(', ', array_slice((array) ($result['searched'] ?? []), 0, 3));
+
+                if ($found && $count > 0) {
+                    $text = "[MOCK] Tìm thấy {$count} cuốn sách phù hợp. Đây là kết quả từ chế độ Mock — Gemini không được gọi.";
+                } else {
+                    $label = $topic ?: $searched ?: 'từ khóa đã cho';
+                    $text  = "[MOCK] Thư viện hiện chưa có sách về \"{$label}\". Bạn có muốn thử từ khóa khác không?";
+                }
             }
 
             return [
@@ -93,13 +108,29 @@ class AIAnalysisService
             ];
         }
 
-        // Round 1 — extract the last user text to use as mock query
+        // Round 1 — extract the last user text to decide which tool to call
         $userText = '';
         foreach (array_reverse($contents) as $c) {
             if (($c['role'] ?? '') === 'user' && isset($c['parts'][0]['text'])) {
                 $userText = $c['parts'][0]['text'];
                 break;
             }
+        }
+
+        if ($this->isPolicyQuestion($userText)) {
+            return [
+                'candidates' => [[
+                    'content' => [
+                        'parts' => [[
+                            'functionCall' => [
+                                'name' => 'get_library_policy',
+                                'args' => [],
+                            ],
+                        ]],
+                    ],
+                    'finishReason' => 'STOP',
+                ]],
+            ];
         }
 
         return [
@@ -119,6 +150,24 @@ class AIAnalysisService
                 'finishReason' => 'STOP',
             ]],
         ];
+    }
+
+    private function isPolicyQuestion(string $text): bool
+    {
+        $lower    = mb_strtolower($text);
+        $keywords = [
+            'quy định', 'nội quy', 'quy tắc',
+            'phí phạt', 'tiền phạt', 'trả trễ',
+            'thời hạn mượn', 'mượn tối đa', 'mượn mấy cuốn', 'được mượn',
+            'bao nhiêu cuốn', 'thẻ thư viện', 'thẻ đọc sách',
+            'gia hạn', 'hạn trả',
+        ];
+        foreach ($keywords as $kw) {
+            if (str_contains($lower, $kw)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

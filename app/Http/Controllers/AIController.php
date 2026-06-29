@@ -149,9 +149,12 @@ class AIController extends Controller
                 'result' => $toolResult,
             ]);
 
-            // Build model parts for Round 2 (include all parts Gemini returned)
+            // Build model parts for Round 2 (include all parts Gemini returned).
+            // Empty args must serialize as {} (JSON object), not [] (JSON array).
+            // json_decode('{}', true) returns [] in PHP; json_encode([]) returns "[]" which
+            // Gemini rejects because args is a proto Struct (must be JSON object).
             $modelParts = array_map(fn ($p) => match ($p['type']) {
-                'functionCall' => ['functionCall' => ['name' => $p['name'], 'args' => $p['args']]],
+                'functionCall' => ['functionCall' => ['name' => $p['name'], 'args' => empty($p['args']) ? new \stdClass() : $p['args']]],
                 default        => ['text' => $p['text']],
             }, $parsed);
 
@@ -448,17 +451,28 @@ class AIController extends Controller
 
     private function toolGetLibraryPolicy(): array
     {
-        $s = $this->books->getLibrarySettings();
-        return [
+        $s    = $this->books->getLibrarySettings();
+        $base = ['borrow_limit', 'max_borrow_days', 'fine_per_day'];
+
+        $result = [
             'borrow_limit'    => $s['borrow_limit'],
             'max_borrow_days' => $s['max_borrow_days'],
             'fine_per_day'    => $s['fine_per_day'],
-            'description'     => sprintf(
-                'Mỗi độc giả được mượn tối đa %d cuốn, thời hạn tối đa %d ngày. Phí phạt trả trễ: %s đồng/ngày/cuốn.',
-                $s['borrow_limit'],
-                $s['max_borrow_days'],
-                number_format($s['fine_per_day'], 0, ',', '.'),
-            ),
         ];
+
+        foreach ($s as $key => $value) {
+            if (!in_array($key, $base, true)) {
+                $result[$key] = $value;
+            }
+        }
+
+        $result['description'] = sprintf(
+            'Mỗi độc giả được mượn tối đa %d cuốn, thời hạn tối đa %d ngày. Phí phạt trả trễ: %s đồng/ngày/cuốn.',
+            $s['borrow_limit'],
+            $s['max_borrow_days'],
+            number_format($s['fine_per_day'], 0, ',', '.'),
+        );
+
+        return $result;
     }
 }
