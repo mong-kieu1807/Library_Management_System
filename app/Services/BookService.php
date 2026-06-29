@@ -213,6 +213,41 @@ class BookService
         ];
     }
 
+    public function getBookAvailability(int $bookId): ?array
+    {
+        $book = DB::table('books as b')
+            ->where('b.book_id', $bookId)
+            ->select('b.book_id', 'b.title')
+            ->first();
+
+        if (!$book) return null;
+
+        $counts = DB::table('book_copies')
+            ->where('book_id', $bookId)
+            ->selectRaw("
+                COUNT(*) as total_copies,
+                SUM(CASE WHEN status = 'available' THEN 1 ELSE 0 END) as available_copies,
+                SUM(CASE WHEN status = 'borrowed'  THEN 1 ELSE 0 END) as borrowed_copies,
+                SUM(CASE WHEN status = 'reserved'  THEN 1 ELSE 0 END) as reserved_copies
+            ")
+            ->first();
+
+        $available = (int) ($counts->available_copies ?? 0);
+        $total     = (int) ($counts->total_copies     ?? 0);
+        $borrowed  = (int) ($counts->borrowed_copies  ?? 0);
+        $reserved  = (int) ($counts->reserved_copies  ?? 0);
+
+        return [
+            'book_id'          => (int) $book->book_id,
+            'title'            => $book->title,
+            'total_copies'     => $total,
+            'available_copies' => $available,
+            'borrowed_copies'  => $borrowed,
+            'reserved_copies'  => $reserved,
+            'is_available'     => $available > 0,
+        ];
+    }
+
     public function getLibrarySettings(): array
     {
         $settings = DB::table('system_settings')

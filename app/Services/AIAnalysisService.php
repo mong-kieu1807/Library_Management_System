@@ -116,6 +116,28 @@ class AIAnalysisService
                     : 'Hiện không có bản nào để mượn.';
 
                 $text = implode("\n", $lines);
+            } elseif ($toolName === 'check_book_availability') {
+                $title     = $result['title']            ?? 'Không rõ';
+                $available = (int) ($result['available_copies'] ?? 0);
+                $total     = (int) ($result['total_copies']     ?? 0);
+                $borrowed  = (int) ($result['borrowed_copies']  ?? 0);
+                $reserved  = (int) ($result['reserved_copies']  ?? 0);
+
+                if ($available > 0) {
+                    $text = "[MOCK] Sách **{$title}** hiện có {$available} bản sẵn sàng để mượn"
+                          . " (tổng {$total} bản).";
+                } else {
+                    $text = "[MOCK] Sách **{$title}** hiện không có bản nào để mượn.";
+                    if ($total > 0) {
+                        $parts = [];
+                        if ($borrowed > 0)  $parts[] = "{$borrowed} bản đang được mượn";
+                        if ($reserved > 0)  $parts[] = "{$reserved} bản đang được đặt trước";
+                        if (!empty($parts)) {
+                            $text .= ' (' . implode(', ', $parts) . ', tổng ' . $total . ' bản).';
+                        }
+                        $text .= ' Bạn có thể đặt trước để được thông báo khi sách được trả lại.';
+                    }
+                }
             } else {
                 // search_books result
                 $found  = $result['found']  ?? false;
@@ -142,6 +164,25 @@ class AIAnalysisService
                                     'parts' => [[
                                         'functionCall' => [
                                             'name' => 'get_book_detail',
+                                            'args' => ['book_id' => $bookId],
+                                        ],
+                                    ]],
+                                ],
+                                'finishReason' => 'STOP',
+                            ]],
+                        ];
+                    }
+                }
+
+                if ($found && $count > 0 && !empty($books) && $this->isAvailabilityQuestion($originalUserText)) {
+                    $bookId = (int) ($books[0]['book_id'] ?? 0);
+                    if ($bookId > 0) {
+                        return [
+                            'candidates' => [[
+                                'content' => [
+                                    'parts' => [[
+                                        'functionCall' => [
+                                            'name' => 'check_book_availability',
                                             'args' => ['book_id' => $bookId],
                                         ],
                                     ]],
@@ -185,6 +226,22 @@ class AIAnalysisService
                             'functionCall' => [
                                 'name' => 'get_library_policy',
                                 'args' => [],
+                            ],
+                        ]],
+                    ],
+                    'finishReason' => 'STOP',
+                ]],
+            ];
+        }
+
+        if ($this->isAvailabilityQuestion($userText) && preg_match('/(?:id|sách số|book_id)\s*[#]?\s*(\d+)/iu', $userText, $m)) {
+            return [
+                'candidates' => [[
+                    'content' => [
+                        'parts' => [[
+                            'functionCall' => [
+                                'name' => 'check_book_availability',
+                                'args' => ['book_id' => (int) $m[1]],
                             ],
                         ]],
                     ],
@@ -237,6 +294,23 @@ class AIAnalysisService
             'thời hạn mượn', 'mượn tối đa', 'mượn mấy cuốn', 'được mượn',
             'bao nhiêu cuốn', 'thẻ thư viện', 'thẻ đọc sách',
             'gia hạn', 'hạn trả',
+        ];
+        foreach ($keywords as $kw) {
+            if (str_contains($lower, $kw)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private function isAvailabilityQuestion(string $text): bool
+    {
+        $lower    = mb_strtolower($text);
+        $keywords = [
+            'còn không', 'còn bản', 'còn để mượn', 'bản nào không',
+            'hết sách', 'đã hết chưa', 'có thể mượn', 'mượn ngay',
+            'bản sẵn', 'available', 'tình trạng sách', 'có sẵn không',
+            'còn sẵn', 'hiện có', 'bản có sẵn',
         ];
         foreach ($keywords as $kw) {
             if (str_contains($lower, $kw)) {

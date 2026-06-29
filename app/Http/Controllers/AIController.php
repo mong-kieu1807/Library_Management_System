@@ -379,13 +379,13 @@ class AIController extends Controller
             ],
             [
                 'name'        => 'check_book_availability',
-                'description' => 'Kiểm tra số lượng bản sao có sẵn của một cuốn sách.',
+                'description' => 'Kiểm tra tình trạng thực tế của sách: số bản có sẵn (available), đang được mượn (borrowed), đang được đặt trước (reserved), và tổng số bản. Gọi tool này khi người dùng hỏi: sách còn không, còn bản nào để mượn không, sách đã hết chưa, có thể mượn ngay không, tình trạng sách hiện tại, bao nhiêu bản sẵn. KHÔNG tự trả lời dựa trên dữ liệu cũ — luôn gọi tool để lấy thông tin realtime từ DB. Nếu chưa biết book_id, hãy gọi search_books trước để lấy book_id, rồi mới gọi check_book_availability.',
                 'parameters'  => [
                     'type'       => 'object',
                     'properties' => [
                         'book_id' => [
                             'type'        => 'integer',
-                            'description' => 'ID của cuốn sách cần kiểm tra',
+                            'description' => 'ID của cuốn sách cần kiểm tra tình trạng',
                         ],
                     ],
                     'required' => ['book_id'],
@@ -504,20 +504,22 @@ class AIController extends Controller
             return ['error' => 'book_id không hợp lệ.'];
         }
 
-        $book = $this->books->getBookDetail($bookId);
-        if (!$book) {
+        $data = $this->books->getBookAvailability($bookId);
+        if (!$data) {
             return ['error' => "Không tìm thấy sách với ID $bookId."];
         }
 
-        $copies = (int) $book['available_copies'];
         return [
-            'book_id'          => $bookId,
-            'title'            => $book['title'],
-            'available_copies' => $copies,
-            'is_available'     => $copies > 0,
-            'message'          => $copies > 0
-                ? "Sách \"{$book['title']}\" hiện có $copies bản có thể mượn."
-                : "Sách \"{$book['title']}\" hiện không có bản nào để mượn.",
+            'book_id'          => $data['book_id'],
+            'title'            => $data['title'],
+            'total_copies'     => $data['total_copies'],
+            'available_copies' => $data['available_copies'],
+            'borrowed_copies'  => $data['borrowed_copies'],
+            'reserved_copies'  => $data['reserved_copies'],
+            'is_available'     => $data['is_available'],
+            'message'          => $data['is_available']
+                ? "Sách \"{$data['title']}\" hiện có {$data['available_copies']} bản có thể mượn (tổng {$data['total_copies']} bản)."
+                : "Sách \"{$data['title']}\" hiện không có bản nào để mượn (tổng {$data['total_copies']} bản, đang mượn {$data['borrowed_copies']}, đặt trước {$data['reserved_copies']}).",
         ];
     }
 
