@@ -3,6 +3,10 @@
 namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
+use App\Models\BorrowTransaction;
+use App\Models\Fine;
+use Illuminate\Support\Facades\Mail;
+use Carbon\Carbon;
 
 class SendOverdueReminder extends Command
 {
@@ -35,20 +39,20 @@ class SendOverdueReminder extends Command
                 continue;
             }
 
-            $daysLate = now()->diffInDays($borrow->due_date);
+            $daysLate = Carbon::parse($borrow->due_date)->startOfDay()->diffInDays(now()->startOfDay());
 
             $fine = Fine::where('borrow_id', $borrow->borrow_id)
                 ->latest()
                 ->first();
 
-            $amount = $fine ? $fine->amount : ($daysLate * 1000);
-
+            $amount = $fine ? (int)$fine->amount : ($daysLate * 1000);
+            
             Mail::raw(
                 "Xin chào {$borrow->user->full_name},
 
     Bạn đang có sách quá hạn trả.
 
-    Hạn trả: {$borrow->due_date}
+    Hạn trả: " . Carbon::parse($borrow->due_date)->format('d/m/Y') . "
     Số ngày quá hạn: {$daysLate} ngày
 
     Phí hiện tại: " . number_format($amount) . " VNĐ

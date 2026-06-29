@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Admin;
 
+use App\Models\Notification;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use App\Http\Controllers\Controller;
@@ -217,7 +218,13 @@ class ReturnController extends Controller
                 foreach ($fineUpdates as $fineId => $newAmount) {
                     DB::table('fines')->where('fine_id', $fineId)->update(['amount' => $newAmount]);
                 }
-
+                    Notification::create([
+                        'user_id' => $userId,
+                        'title' => 'Trả sách thành công',
+                        'content' => 'Thư viện đã xác nhận bạn trả sách thành công.',
+                        'type' => 'return',
+                        'is_read' => 0,
+                    ]);
                 return [
                     'return_date'          => $today->toDateString(),
                     'returned_books_count' => count($copyIds),

@@ -194,3 +194,11 @@ Route::middleware(['auth:sanctum', 'role:admin'])->prefix('private/v1')->group(f
     Route::get('/dashboard', [App\Http\Controllers\Admin\DashboardController::class, 'getDashboardData']);
     Route::get('/dashboard/recent-activities', [App\Http\Controllers\Admin\DashboardController::class, 'getRecentActivities']);
 });
+
+Route::prefix('v1/me')->middleware('auth:sanctum')->group(function () {
+
+    Route::get('/notifications', [NotificationController::class, 'index']);
+
+    Route::patch('/notifications/{id}/read', [NotificationController::class, 'markAsRead']);
+
+});

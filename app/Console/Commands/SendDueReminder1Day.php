@@ -7,7 +7,7 @@ use App\Models\BorrowTransaction;
 use Illuminate\Support\Facades\Mail;
 use Carbon\Carbon;
 
-class SendDueReminder3Days extends Command
+class SendDueReminder1Day extends Command
 {
     /**
      * The name and signature of the console command.
@@ -21,7 +21,7 @@ class SendDueReminder3Days extends Command
      *
      * @var string
      */
-    protected $description = 'Command description';
+    protected $description = 'Gửi email nhắc trả sách trước 1 ngày';
 
     /**
      * Execute the console command.

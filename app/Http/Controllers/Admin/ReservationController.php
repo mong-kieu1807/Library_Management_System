@@ -124,9 +124,24 @@ class ReservationController extends Controller
             'expired_at'     => null,
             'created_at'     => $now,
         ]);
-
+        DB::table('notifications')->insert([
+            'user_id' => $userId,
+            'title' => 'Đặt trước thành công',
+            'content' => "Bạn đã đặt trước sách '{$title}'. Vị trí hàng chờ: {$nextPosition}.",
+            'type' => 'reservation',
+            'is_read' => 0,
+            'created_at' => now(),
+        ]);
         $title = DB::table('books')->where('book_id', $bookId)->value('title');
 
+        DB::table('notifications')->insert([
+            'user_id' => $userId,
+            'title' => 'Đặt trước thành công',
+            'content' => "Bạn đã đặt trước sách '{$title}'. Vị trí hàng chờ: {$nextPosition}.",
+            'type' => 'reservation',
+            'is_read' => 0,
+            'created_at' => now(),
+        ]);
         return response()->json([
             'code'    => 200,
             'message' => 'Đặt trước sách thành công.',
@@ -295,7 +310,14 @@ class ReservationController extends Controller
                     'status'      => 'converted',
                     'notified_at' => now(),
                 ]);
-
+                DB::table('notifications')->insert([
+                    'user_id' => $userId,
+                    'title' => 'Đặt trước hoàn tất',
+                    'content' => "Bạn đã nhận thành công sách '{$bookTitle}'.",
+                    'type' => 'reservation',
+                    'is_read' => 0,
+                    'created_at' => now(),
+                ]);
                 $bookTitle = DB::table('books')->where('book_id', $reservation->book_id)->value('title');
 
                 return [
@@ -363,6 +385,18 @@ class ReservationController extends Controller
             ->where('reservation_id', $reservationId)
             ->update(['status' => 'cancelled']);
 
+            $title = DB::table('books')
+            ->where('book_id', $reservation->book_id)
+            ->value('title');
+
+        DB::table('notifications')->insert([
+            'user_id' => $reservation->user_id,
+            'title' => 'Đã hủy đặt trước',
+            'content' => "Phiếu đặt trước sách '{$title}' đã được hủy.",
+            'type' => 'reservation',
+            'is_read' => 0,
+            'created_at' => now(),
+        ]);
         return response()->json([
             'code'    => 200,
             'message' => 'Đã hủy phiếu đặt trước.',
@@ -377,16 +411,42 @@ class ReservationController extends Controller
      */
     public function expireReservations()
     {
-        $count = DB::table('reservations')
+        $reservations = DB::table('reservations')
             ->where('status', 'ready')
             ->whereNotNull('expired_at')
             ->where('expired_at', '<', now())
-            ->update(['status' => 'expired']);
+            ->get();
+
+        foreach ($reservations as $reservation) {
+
+            DB::table('reservations')
+                ->where('reservation_id', $reservation->reservation_id)
+                ->update([
+                    'status' => 'expired'
+                ]);
+
+            $title = DB::table('books')
+                ->where('book_id', $reservation->book_id)
+                ->value('title');
+
+            DB::table('notifications')->insert([
+                'user_id'    => $reservation->user_id,
+                'title'      => 'Phiếu đặt trước đã hết hạn',
+                'content'    => "Phiếu đặt trước sách '{$title}' đã hết hạn.",
+                'type'       => 'reservation',
+                'is_read'    => 0,
+                'created_at' => now(),
+            ]);
+        }
 
         return response()->json([
-            'code'    => 200,
-            'message' => "Đã hết hạn {$count} phiếu đặt trước.",
-            'results' => ['object' => ['expired_count' => $count]],
+            'code' => 200,
+            'message' => 'Đã hết hạn ' . $reservations->count() . ' phiếu đặt trước.',
+            'results' => [
+                'object' => [
+                    'expired_count' => $reservations->count()
+                ]
+            ]
         ]);
     }
 }

@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\RenewBookRequest;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Http\Request;
+use App\Models\Notification;
 
 class RenewController extends Controller
 {
@@ -72,6 +73,14 @@ class RenewController extends Controller
                     'deny_reason'     => $denyReason,
                 ];
             });
+
+Notification::create([
+    'user_id' => $userId,
+    'title' => 'Gia hạn thành công',
+    'content' => "Bạn đã gia hạn thành công " . count($copyIds) . " cuốn sách.",
+    'type' => 'renew',
+    'is_read' => 0,
+]);
 
         return response()->json([
             'code'    => 200,
