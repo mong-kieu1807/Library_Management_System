@@ -3,6 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\Auth\ForgotPasswordController;
+use App\Http\Controllers\Auth\GoogleAuthController;
 use App\Http\Controllers\LibraryCardController;
 use App\Http\Controllers\BookController;
 use App\Http\Controllers\BorrowingController;
@@ -19,6 +20,8 @@ use App\Http\Controllers\Admin\RenewController;
 use App\Http\Controllers\Admin\ReservationController as AdminReservationController;
 use App\Http\Controllers\Admin\ReceiptController;
 use App\Http\Controllers\Admin\HistoryController;
+use App\Http\Controllers\AIController;
+use App\Http\Controllers\Admin\ReportController;
 
 
 Route::prefix('v1/auth')->group(function () {
@@ -28,7 +31,13 @@ Route::prefix('v1/auth')->group(function () {
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::post('/forgot-password', [ForgotPasswordController::class, 'sendResetLink']);
     Route::post('/reset-password', [ForgotPasswordController::class, 'resetPassword']);
+    Route::get('/google',          [GoogleAuthController::class, 'redirect']);
+    Route::get('/google/callback', [GoogleAuthController::class, 'callback']);
+    Route::get('/verify-email',         [AuthController::class, 'verifyEmail']);
+    Route::post('/resend-verification', [AuthController::class, 'resendVerification']);
 });
+
+Route::post('v1/ai/chat', [AIController::class, 'chat']);
 
 Route::get('v1/public/shared/favorites/{token}', [WishlistController::class, 'publicView']);
 
@@ -41,15 +50,19 @@ Route::get('v1/books/{bookId}/related', [PublicBookController::class, 'related']
 Route::get('v1/books/{bookId}/reviews', [PublicBookController::class, 'reviews']);
 Route::get('v1/books/{bookId}/review-permission', [PublicBookController::class, 'reviewPermission']);
 Route::post('v1/books/{bookId}/reviews', [PublicBookController::class, 'submitReview']);
+// Browser-navigation routes (window.open / download link) — Sanctum token cannot be sent via header
+// from plain browser navigation, so these remain outside token-auth middleware.
 Route::get('v1/book-copies/print-labels', [App\Http\Controllers\Admin\BookCopyController::class, 'printLabels']);
 Route::get('v1/book-copies/export-excel', [App\Http\Controllers\Admin\BookCopyController::class, 'exportExcel']);
 Route::get('v1/book-copies/export-pdf', [App\Http\Controllers\Admin\BookCopyController::class, 'exportPdfReport']);
-Route::post('v1/book-copies/import', [App\Http\Controllers\Admin\BookCopyController::class, 'importCopies']);
-Route::get('v1/book-copies/summary-report', [App\Http\Controllers\Admin\BookCopyController::class, 'summaryReport']);
+// Receipt PDF — same pattern as book-copies exports: window.open() cannot send Authorization header
+Route::get('private/v1/receipt/checkout/{borrow_id}', [ReceiptController::class, 'checkoutReceipt']);
+Route::get('private/v1/receipt/return/{borrow_id}',   [ReceiptController::class, 'returnReceipt']);
 
 Route::middleware(['auth:sanctum', 'role:admin,librarian'])->group(function () {
     Route::post('v1/books', [AdminBookController::class, 'store']);
     Route::get('v1/books/isbn/{isbn}', [AdminBookController::class, 'fetchByISBN']);
+    Route::get('v1/books/{bookId}/admin-detail', [AdminBookController::class, 'show']);
     Route::put('v1/books/{bookId}', [AdminBookController::class, 'update']);
     Route::delete('v1/books/{bookId}', [AdminBookController::class, 'destroy']);
 
@@ -73,25 +86,26 @@ Route::middleware(['auth:sanctum', 'role:admin,librarian'])->group(function () {
     Route::post('v1/book-copies', [App\Http\Controllers\Admin\BookCopyController::class, 'store']);
     Route::put('v1/book-copies/{id}', [App\Http\Controllers\Admin\BookCopyController::class, 'update']);
     Route::delete('v1/book-copies/{id}', [App\Http\Controllers\Admin\BookCopyController::class, 'destroy']);
+    Route::post('v1/book-copies/import', [App\Http\Controllers\Admin\BookCopyController::class, 'importCopies']);
+    Route::get('v1/book-copies/summary-report', [App\Http\Controllers\Admin\BookCopyController::class, 'summaryReport']);
 });
 
 Route::get('v1/library-card/{userId}', [LibraryCardController::class, 'show']);
 
 Route::prefix('v1/profile')->group(function () {
-    // Change-password: specific literals BEFORE {userId} wildcard
-    // Auth is handled in controller via PersonalAccessToken::findToken (same pattern as logout)
+    // Change-password: auth handled in controller via PersonalAccessToken::findToken
     Route::post('/change-password/request', [ProfileController::class, 'requestChangePassword']);
     Route::post('/change-password/verify',  [ProfileController::class, 'verifyChangePassword']);
 
-    // Wildcard routes — no auth middleware (userId in URL, legacy)
-    Route::get('/{userId}',         [ProfileController::class, 'show']);
-    Route::put('/{userId}',         [ProfileController::class, 'update']);
-    Route::post('/{userId}/avatar', [ProfileController::class, 'updateAvatar']);
+    // Public read — show profile (GET only, read-only)
+    Route::get('/{userId}', [ProfileController::class, 'show']);
+
+    // Write actions — must be authenticated
+    Route::middleware('auth:sanctum')->group(function () {
+        Route::put('/{userId}',         [ProfileController::class, 'update']);
+        Route::post('/{userId}/avatar', [ProfileController::class, 'updateAvatar']);
+    });
 });
-    Route::post(
-        'v1/reservations',
-        [ReservationController::class, 'reserveBook']
-    );
 Route::middleware('auth:sanctum')->prefix('v1/me')->group(function () {
     Route::get('/borrowing', [BorrowingController::class, 'index']);
     Route::get('/borrowing/history', [BorrowingController::class, 'history']);
@@ -117,11 +131,12 @@ Route::middleware(['auth:sanctum', 'role:admin,librarian'])->prefix('private/v1'
     Route::patch('/users/{id}', [App\Http\Controllers\Admin\UserController::class, 'update']);
     Route::delete('/users/{id}', [App\Http\Controllers\Admin\UserController::class, 'destroy']);
     Route::post('/users/{id}/reset-password', [App\Http\Controllers\Admin\UserController::class, 'resetPassword']);
-    
+
     // Librarian Management (List only for both admin and librarians)
     Route::get('/librarians', [App\Http\Controllers\Admin\LibrarianManagementController::class, 'index']);
 
-    // Reader borrow history for both admin and librarians
+    // Reader list + borrow history — accessible by both admin and librarians
+    Route::get('/readers', [App\Http\Controllers\Admin\ReaderManagementController::class, 'index']);
     Route::get('/readers/{id}/borrow-history', [App\Http\Controllers\Admin\ReaderManagementController::class, 'borrowHistory']);
 
     // Access Audit Logs (Login Logs) for both admin and librarians
@@ -135,8 +150,6 @@ Route::middleware(['auth:sanctum', 'role:admin,librarian'])->prefix('private/v1'
         Route::post('/',              [BorrowTransactionController::class, 'store']);
         Route::get('/renew-list',     [RenewController::class, 'getRenewList']);
         Route::post('/renew',         [RenewController::class, 'renewBook']);
-        // PDF receipt — resource-first route (new pattern, backward compat)
-        Route::get('/{borrow_id}/receipt', [ReceiptController::class, 'checkoutReceipt']);
     });
 
     // Book Return (Check-in)
@@ -145,8 +158,6 @@ Route::middleware(['auth:sanctum', 'role:admin,librarian'])->prefix('private/v1'
         Route::get('/borrowed-books/{user_id}', [ReturnController::class, 'getBorrowedBooks']);
         Route::get('/validate/{barcode}',       [ReturnController::class, 'validateReturnCopy']);
         Route::post('/confirm',                 [ReturnController::class, 'confirmReturn']);
-        // PDF receipt — resource-first route (new pattern, backward compat)
-        Route::get('/{borrow_id}/receipt',      [ReceiptController::class, 'returnReceipt']);
     });
 
     // User history (read-only aggregation)
@@ -161,12 +172,6 @@ Route::middleware(['auth:sanctum', 'role:admin,librarian'])->prefix('private/v1'
     Route::get('/dashboard/top-books', [App\Http\Controllers\Admin\DashboardController::class, 'getTopBooks']);
     Route::get('/dashboard/overdue',   [App\Http\Controllers\Admin\DashboardController::class, 'getOverdueList']);
 
-    // PDF Receipts
-    Route::prefix('receipt')->group(function () {
-        Route::get('/checkout/{borrow_id}', [ReceiptController::class, 'checkoutReceipt']);
-        Route::get('/return/{borrow_id}',   [ReceiptController::class, 'returnReceipt']);
-    });
-
     // Reservation (Đặt trước sách)
     Route::prefix('reservation')->group(function () {
         Route::get('/search-book',  [AdminReservationController::class, 'searchBook']);
@@ -178,6 +183,14 @@ Route::middleware(['auth:sanctum', 'role:admin,librarian'])->prefix('private/v1'
     });
 });
 
+// Module 6 — Báo cáo & Thống kê
+Route::middleware(['auth:sanctum', 'role:admin,librarian'])->prefix('private/v1/reports')->group(function () {
+    Route::get('/transactions',          [ReportController::class, 'transactions']);          // Phase 1
+    Route::get('/top-books',             [ReportController::class, 'topBooks']);              // Phase 2
+    Route::get('/top-readers',           [ReportController::class, 'topReaders']);            // Phase 3A
+    Route::get('/reader-registrations',  [ReportController::class, 'readerRegistrations']);  // Phase 3B
+});
+
 Route::middleware(['auth:sanctum', 'role:admin'])->prefix('private/v1')->group(function () {
     // Librarian Management Routes (Write actions remain admin only)
     Route::post('/librarians', [App\Http\Controllers\Admin\LibrarianManagementController::class, 'store']);
@@ -185,8 +198,7 @@ Route::middleware(['auth:sanctum', 'role:admin'])->prefix('private/v1')->group(f
     Route::delete('/librarians/{id}', [App\Http\Controllers\Admin\LibrarianManagementController::class, 'destroy']);
     Route::post('/librarians/{id}/reset-password', [App\Http\Controllers\Admin\LibrarianManagementController::class, 'resetPassword']);
 
-    // Reader Management Routes
-    Route::get('/readers', [App\Http\Controllers\Admin\ReaderManagementController::class, 'index']);
+    // Reader Management Routes (write actions — admin only)
     Route::patch('/readers/{id}/status', [App\Http\Controllers\Admin\ReaderManagementController::class, 'toggleStatus']);
     Route::post('/readers/{id}/reset-password', [App\Http\Controllers\Admin\ReaderManagementController::class, 'resetPassword']);
 

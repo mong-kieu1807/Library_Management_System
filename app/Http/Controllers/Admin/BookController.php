@@ -240,6 +240,11 @@ class BookController extends Controller
         $changes = [];
         $updateData = [];
 
+        // Pre-load name maps so IDs are stored as human-readable names in history
+        $publisherMap = DB::table('publishers')->pluck('name', 'publisher_id');
+        $authorMap    = DB::table('authors')->pluck('author_name', 'author_id');
+        $categoryMap  = DB::table('categories')->pluck('category_name', 'category_id');
+
         foreach ($editableFields as $field) {
             if (!$request->exists($field)) {
                 continue;
@@ -253,7 +258,11 @@ class BookController extends Controller
             }
 
             $updateData[$field] = $newValue;
-            $changes[] = $this->makeHistoryRow($book->book_id, $editedBy, $field, $oldValue, $newValue, $request->input('edit_reason'));
+
+            // Resolve IDs to display names before recording
+            $oldDisplay = $this->resolveFieldDisplay($field, $oldValue, $publisherMap, $authorMap);
+            $newDisplay = $this->resolveFieldDisplay($field, $newValue, $publisherMap, $authorMap);
+            $changes[] = $this->makeHistoryRow($book->book_id, $editedBy, $field, $oldDisplay, $newDisplay, $request->input('edit_reason'));
         }
 
         if ($request->exists('authors')) {
@@ -261,14 +270,18 @@ class BookController extends Controller
             $newAuthors = collect($validated['authors'] ?? [])->map(fn ($id) => (int) $id)->unique()->sort()->values()->all();
 
             if ($oldAuthors !== $newAuthors) {
-                $changes[] = $this->makeHistoryRow($book->book_id, $editedBy, 'authors', $oldAuthors, $newAuthors, $request->input('edit_reason'));
+                $oldAuthorNames = $book->authors->pluck('author_name')->sort()->values()->all();
+                $newAuthorNames = collect($newAuthors)->map(fn ($id) => $authorMap[$id] ?? "ID:{$id}")->sort()->values()->all();
+                $changes[] = $this->makeHistoryRow($book->book_id, $editedBy, 'authors', $oldAuthorNames, $newAuthorNames, $request->input('edit_reason'));
             }
 
             if (!empty($validated['authors'])) {
                 $primaryAuthorId = (int)$validated['authors'][0];
                 if ($book->author_id !== $primaryAuthorId) {
                     $updateData['author_id'] = $primaryAuthorId;
-                    $changes[] = $this->makeHistoryRow($book->book_id, $editedBy, 'author_id', $book->author_id, $primaryAuthorId, $request->input('edit_reason'));
+                    $oldAuthorName = $authorMap[$book->author_id] ?? "ID:{$book->author_id}";
+                    $newAuthorName = $authorMap[$primaryAuthorId] ?? "ID:{$primaryAuthorId}";
+                    $changes[] = $this->makeHistoryRow($book->book_id, $editedBy, 'author_id', $oldAuthorName, $newAuthorName, $request->input('edit_reason'));
                 }
             }
         }
@@ -278,7 +291,9 @@ class BookController extends Controller
             $newCategories = collect($validated['categories'] ?? [])->map(fn ($id) => (int) $id)->unique()->sort()->values()->all();
 
             if ($oldCategories !== $newCategories) {
-                $changes[] = $this->makeHistoryRow($book->book_id, $editedBy, 'categories', $oldCategories, $newCategories, $request->input('edit_reason'));
+                $oldCategoryNames = $book->categories->pluck('category_name')->sort()->values()->all();
+                $newCategoryNames = collect($newCategories)->map(fn ($id) => $categoryMap[$id] ?? "ID:{$id}")->sort()->values()->all();
+                $changes[] = $this->makeHistoryRow($book->book_id, $editedBy, 'categories', $oldCategoryNames, $newCategoryNames, $request->input('edit_reason'));
             }
         }
 
@@ -309,7 +324,7 @@ class BookController extends Controller
     public function destroy(int $id)
     {
         $book = Book::findOrFail($id);
-        if($book->bookCopies()->where('status', '=', 'borrowing')->exists()){
+        if($book->bookCopies()->where('status', '=', 'borrowed')->exists()){
             return response()->json(['message' => 'Không thể xóa sách này vì còn bản sao sách đang được mượn'], 400);
         }
         else if($book->bookCopies()->where('status', '=', 'reserved')->exists()){
@@ -331,6 +346,14 @@ class BookController extends Controller
             'edit_reason' => $reason,
             'edited_at' => now(),
         ];
+    }
+
+    private function resolveFieldDisplay(string $field, mixed $value, $publisherMap, $authorMap): mixed
+    {
+        if ($value === null) return null;
+        if ($field === 'publisher_id') return $publisherMap[$value] ?? "ID:{$value}";
+        if ($field === 'author_id')    return $authorMap[$value]    ?? "ID:{$value}";
+        return $value;
     }
 
     private function formatHistoryValue(mixed $value): ?string

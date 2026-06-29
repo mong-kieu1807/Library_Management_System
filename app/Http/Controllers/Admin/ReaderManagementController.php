@@ -20,7 +20,7 @@ class ReaderManagementController extends Controller
         $cardType = ($card && $card->borrow_limit > 5) ? 'premium' : 'regular';
         $cardNumber = $card ? $card->card_number : '—';
         
-        $borrowingCount = $user->borrowTransactions()->where('status', 'active')->count();
+        $borrowingCount = $user->borrowTransactions()->where('status', 'borrowing')->count();
         $overdueCount = $user->borrowTransactions()->where('status', 'overdue')->count();
 
         return [
@@ -179,6 +179,10 @@ class ReaderManagementController extends Controller
             ->join('borrow_details', 'borrow_transactions.borrow_id', '=', 'borrow_details.borrow_id')
             ->join('book_copies', 'borrow_details.copy_id', '=', 'book_copies.copy_id')
             ->join('books', 'book_copies.book_id', '=', 'books.book_id')
+            ->leftJoin('fines as f', function ($j) {
+                $j->on('f.borrow_id', '=', 'borrow_details.borrow_id')
+                  ->on('f.copy_id', '=', 'borrow_details.copy_id');
+            })
             ->select(
                 'borrow_transactions.borrow_id',
                 'borrow_transactions.borrow_date',
@@ -189,7 +193,9 @@ class ReaderManagementController extends Controller
                 'book_copies.barcode as copy_barcode',
                 'borrow_details.return_date',
                 'borrow_details.condition_return',
-                'borrow_details.renew_count'
+                'borrow_details.renew_count',
+                DB::raw('COALESCE(f.amount, 0) as fine_amount'),
+                DB::raw('f.status as fine_status')
             )
             ->where('borrow_transactions.user_id', $id)
             ->orderBy('borrow_transactions.borrow_id', 'DESC')
@@ -198,16 +204,18 @@ class ReaderManagementController extends Controller
         // Format history response
         $history = $transactions->map(function ($row) {
             return [
-                'borrow_id' => $row->borrow_id,
-                'borrow_date' => $row->borrow_date,
-                'due_date' => $row->due_date,
-                'status' => $row->transaction_status,
-                'librarian_name' => $row->librarian_name,
-                'book_title' => $row->book_title,
-                'copy_barcode' => $row->copy_barcode,
-                'return_date' => $row->return_date,
+                'borrow_id'        => $row->borrow_id,
+                'borrow_date'      => $row->borrow_date,
+                'due_date'         => $row->due_date,
+                'status'           => $row->transaction_status,
+                'librarian_name'   => $row->librarian_name,
+                'book_title'       => $row->book_title,
+                'copy_barcode'     => $row->copy_barcode,
+                'return_date'      => $row->return_date,
                 'condition_return' => $row->condition_return,
-                'renew_count' => $row->renew_count
+                'renew_count'      => (int) $row->renew_count,
+                'fine_amount'      => (int) $row->fine_amount,
+                'fine_status'      => $row->fine_status,
             ];
         });
 

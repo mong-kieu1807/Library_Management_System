@@ -38,7 +38,7 @@ class HistoryController extends Controller
             ->join('book_copies as bc', 'bc.copy_id', '=', 'bd.copy_id')
             ->join('books as b', 'b.book_id', '=', 'bc.book_id')
             ->where('bt.user_id', $userId)
-            ->whereIn('bt.status', ['active', 'overdue'])
+            ->whereIn('bt.status', ['borrowing', 'overdue'])
             ->select([
                 'bt.borrow_id', 'bt.borrow_date', 'bt.due_date', 'bt.status',
                 'bd.copy_id', 'bd.renew_count',

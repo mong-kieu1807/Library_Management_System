@@ -130,7 +130,13 @@ class BookCopyController extends Controller
     public function destroy(Request $request, string $id)
     {
         $copy = BookCopy::findOrFail($id);
-        
+
+        if (in_array($copy->status, ['borrowed', 'reserved'])) {
+            return response()->json([
+                'message' => 'Không thể thanh lý bản sao đang được mượn hoặc đặt trước.',
+            ], 422);
+        }
+
         // Soft-retire the copy: update its status to liquidated
         $copy->update([
             'status' => 'liquidated'

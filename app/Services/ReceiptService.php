@@ -57,9 +57,10 @@ class ReceiptService
 
         $pdf = Pdf::loadView('receipts.checkout', $data);
         $pdf->setPaper('A4', 'portrait');
+        $pdf->setOptions($this->dompdfOptions());
 
-        $filename = 'phieu-muon-' . str_pad($borrowId, 6, '0', STR_PAD_LEFT) . '.pdf';
-        return $pdf->stream($filename);
+        $title = 'Phiếu mượn #' . str_pad($borrowId, 6, '0', STR_PAD_LEFT);
+        return $this->wrapPdfAsHtml($pdf->output(), $title);
     }
 
     /**
@@ -105,17 +106,19 @@ class ReceiptService
             ->get();
 
         // [3] Overdue days per book + latest return date
-        $due        = Carbon::parse($borrow->due_date)->startOfDay();
-        $returnDate = null;
+        $due              = Carbon::parse($borrow->due_date)->startOfDay();
+        $latestReturnDate = null; // giữ là Carbon instance để tránh parse lại chuỗi d/m/Y
 
-        $returnedBooks->each(function ($book) use ($due, &$returnDate) {
-            $retDate             = Carbon::parse($book->return_date)->startOfDay();
-            $book->overdue_days  = $retDate->gt($due) ? (int) $retDate->diffInDays($due, true) : 0;
-            $book->fine_amount   = (int) ($book->fine_amount ?? 0);
-            if (!$returnDate || $retDate->gt(Carbon::parse($returnDate))) {
-                $returnDate = $retDate->format('d/m/Y');
+        $returnedBooks->each(function ($book) use ($due, &$latestReturnDate) {
+            $retDate            = Carbon::parse($book->return_date)->startOfDay();
+            $book->overdue_days = $retDate->gt($due) ? (int) $retDate->diffInDays($due, true) : 0;
+            $book->fine_amount  = (int) ($book->fine_amount ?? 0);
+            if (!$latestReturnDate || $retDate->gt($latestReturnDate)) {
+                $latestReturnDate = $retDate;
             }
         });
+
+        $returnDate = $latestReturnDate ? $latestReturnDate->format('d/m/Y') : today()->format('d/m/Y');
 
         // [4] Fine summary — total from fines table
         $totalFine = (int) $returnedBooks->sum('fine_amount');
@@ -145,7 +148,7 @@ class ReceiptService
                 'card_number' => $borrow->card_number,
             ],
             'returnedBooks' => $returnedBooks,
-            'returnDate'    => $returnDate ?? today()->format('d/m/Y'),
+            'returnDate'    => $returnDate,
             'totalFine'     => $totalFine,
             'paidAmount'    => $paidAmount,
             'unpaidAmount'  => $unpaidAmount,
@@ -156,8 +159,66 @@ class ReceiptService
 
         $pdf = Pdf::loadView('receipts.return', $data);
         $pdf->setPaper('A4', 'portrait');
+        $pdf->setOptions($this->dompdfOptions());
 
-        $filename = 'bien-lai-tra-' . str_pad($borrowId, 6, '0', STR_PAD_LEFT) . '.pdf';
-        return $pdf->stream($filename);
+        $title = 'Biên lai trả sách #' . str_pad($borrowId, 6, '0', STR_PAD_LEFT);
+        return $this->wrapPdfAsHtml($pdf->output(), $title);
+    }
+
+    /**
+     * DomPDF options — trỏ đúng fontDir và fontCache để load DejaVu Sans hỗ trợ tiếng Việt.
+     */
+    private function dompdfOptions(): array
+    {
+        $fontDir = base_path('vendor/dompdf/dompdf/lib/fonts');
+
+        return [
+            'fontDir'         => $fontDir,
+            'fontCache'       => storage_path('fonts'),
+            'defaultFont'     => 'DejaVu Sans',
+            'isRemoteEnabled' => false,
+        ];
+    }
+
+    /**
+     * Bọc nội dung PDF trong một trang HTML trả về Content-Type: text/html.
+     * Kỹ thuật này bypass IDM (Internet Download Manager) vì IDM chỉ chặn
+     * response có Content-Type: application/pdf, không chặn text/html.
+     * JavaScript trong trang tự tạo blob URL từ base64 và nhúng vào <embed>.
+     */
+    private function wrapPdfAsHtml(string $pdfBinary, string $title): \Illuminate\Http\Response
+    {
+        $base64    = base64_encode($pdfBinary);
+        $safeTitle = htmlspecialchars($title, ENT_QUOTES, 'UTF-8');
+
+        $html = <<<HTML
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>{$safeTitle}</title>
+  <style>
+    * { margin: 0; padding: 0; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #525659; }
+    iframe { display: block; width: 100%; height: 100%; border: none; }
+  </style>
+</head>
+<body>
+  <iframe id="v"></iframe>
+  <script>
+    (function () {
+      var b64 = "{$base64}";
+      var raw = atob(b64);
+      var arr = new Uint8Array(raw.length);
+      for (var i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+      var blob = new Blob([arr], { type: "application/pdf" });
+      document.getElementById("v").src = URL.createObjectURL(blob);
+    })();
+  </script>
+</body>
+</html>
+HTML;
+
+        return response($html, 200, ['Content-Type' => 'text/html; charset=utf-8']);
     }
 }

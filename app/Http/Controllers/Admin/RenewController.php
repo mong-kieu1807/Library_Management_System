@@ -37,7 +37,7 @@ class RenewController extends Controller
             ->join('books as b', 'b.book_id', '=', 'bc.book_id')
             ->join('users as u', 'u.user_id', '=', 'bt.user_id')
             ->leftJoin('library_cards as lc', 'lc.user_id', '=', 'u.user_id')
-            ->whereIn('bt.status', ['active', 'overdue'])
+            ->whereIn('bt.status', ['borrowing', 'overdue'])
             ->select([
                 'bt.borrow_id', 'bt.user_id', 'bt.borrow_date', 'bt.due_date',
                 'bd.copy_id', 'bd.renew_count',

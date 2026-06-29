@@ -10,6 +10,8 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\RateLimiter;
 
 class AuthController extends Controller
 {
@@ -18,7 +20,7 @@ class AuthController extends Controller
         $request->validate([
             'full_name'             => 'required|string|max:150',
             'email'                 => 'required|email|unique:users,email',
-            'password'              => 'required|string|min:8|confirmed',
+            'password'              => ['required', 'string', 'confirmed', new \App\Rules\StrongPassword()],
             'password_confirmation' => 'required',
         ]);
 
@@ -39,7 +41,11 @@ class AuthController extends Controller
                 'status'    => 1,
             ]);
 
+            // [HOTFIX] TiDB: card_id không auto-increment — tự sinh ID
+            $nextCardId = (int) (DB::table('library_cards')->lockForUpdate()->max('card_id') ?? 0) + 1;
+            \Illuminate\Support\Facades\Log::debug('[LibraryCard Hotfix] Generated card_id = ' . $nextCardId);
             DB::table('library_cards')->insert([
+                'card_id'         => $nextCardId,
                 'user_id'         => $user->user_id,
                 'card_number'     => 'TV' . str_pad($user->user_id, 4, '0', STR_PAD_LEFT),
                 'issue_date'      => Carbon::today(),
@@ -52,31 +58,11 @@ class AuthController extends Controller
             return $user;
         });
 
-        $token = $user->createToken('reader-token')->plainTextToken;
-
-        $userData = [
-            'id'          => (string) $user->user_id,
-            'name'        => $user->full_name,
-            'email'       => $user->email,
-            'role'        => $readerRole->role_name,
-            'phone'       => $user->phone,
-            'avatar'      => $user->avatar_url,
-            'status'      => [
-                'value' => (string) $user->status,
-                'label' => $user->status === 1 ? 'Active' : 'Inactive',
-            ],
-            'achievement' => null,
-            'createdAt'   => $user->created_at ? $user->created_at->toIso8601String() : null,
-            'updatedAt'   => $user->updated_at ? $user->updated_at->toIso8601String() : null,
-        ];
+        $this->sendVerificationEmail($user);
 
         return response()->json([
-            'results' => [
-                'object' => [
-                    'accessToken' => $token,
-                    'user'        => $userData,
-                ]
-            ]
+            'success' => true,
+            'message' => 'Đăng ký thành công. Vui lòng kiểm tra email để xác minh tài khoản.',
         ]);
     }
 
@@ -150,8 +136,14 @@ class AuthController extends Controller
             ], 403);
         }
 
-        // Generate Sanctum access token
-        $token = $user->createToken("{$roleName}-token")->plainTextToken;
+        // Block login if email has not been verified
+        if (!$user->email_verified_at) {
+            return response()->json([
+                'message' => 'Vui lòng xác minh email trước khi đăng nhập.',
+                'error'   => 'email_not_verified',
+            ], 403);
+        }
+
         // Check if user is an admin - Admin MUST use 2FA (only if the 'google2fa_secret' column exists in the database)
         if ($roleName === 'admin' && \Illuminate\Support\Facades\Schema::hasColumn('users', 'google2fa_secret')) {
             $isSetup = empty($user->google2fa_secret);
@@ -184,16 +176,7 @@ class AuthController extends Controller
             ]);
         }
 
-        // Generate Sanctum access token for non-admins (Librarians, Readers, etc.)
-        // Ensure personal_access_tokens table is present
-        if (!\Illuminate\Support\Facades\Schema::hasTable('personal_access_tokens')) {
-            \Illuminate\Support\Facades\Artisan::call('migrate', [
-                '--path' => 'database/migrations/2026_06_18_122439_create_personal_access_tokens_table.php',
-                '--force' => true
-            ]);
-        }
-        
-        $token = $user->createToken('admin-token')->plainTextToken;
+        $token = $user->createToken("{$roleName}-token")->plainTextToken;
 
         // Log successful login
         $this->logLoginAttempt($credentials['email'], $user->user_id, 'success');
@@ -237,14 +220,6 @@ class AuthController extends Controller
 
         // Delete temporary token
         $user->currentAccessToken()->delete();
-
-        // Ensure personal_access_tokens table exists
-        if (!\Illuminate\Support\Facades\Schema::hasTable('personal_access_tokens')) {
-            \Illuminate\Support\Facades\Artisan::call('migrate', [
-                '--path' => 'database/migrations/2026_06_18_122439_create_personal_access_tokens_table.php',
-                '--force' => true
-            ]);
-        }
 
         // Generate final full-access token
         $token = $user->createToken('admin-token')->plainTextToken;
@@ -324,5 +299,129 @@ class AuthController extends Controller
         } catch (\Throwable $e) {
             \Illuminate\Support\Facades\Log::error("Failed to log login attempt: " . $e->getMessage());
         }
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // Email verification
+    // ──────────────────────────────────────────────────────────────
+
+    private function generateVerifyToken(string $email): string
+    {
+        $payload = base64_encode(json_encode([
+            'email'      => $email,
+            'expires_at' => now()->addHours(24)->timestamp,
+        ]));
+        $sig = hash_hmac('sha256', $payload, config('app.key'));
+        return $payload . '.' . $sig;
+    }
+
+    private function sendVerificationEmail(User $user): void
+    {
+        try {
+            $token      = $this->generateVerifyToken($user->email);
+            $frontendUrl = rtrim(env('FRONTEND_URL', 'http://localhost:3000'), '/');
+            $verifyUrl  = "{$frontendUrl}/auth/verify-email?token=" . urlencode($token);
+
+            Mail::raw(
+                "Xin chào {$user->full_name},\n\n"
+                . "Vui lòng xác minh địa chỉ email của bạn bằng cách nhấn vào link bên dưới (hiệu lực 24 giờ):\n"
+                . "{$verifyUrl}\n\n"
+                . "Nếu bạn không đăng ký tài khoản này, hãy bỏ qua email này.",
+                function ($message) use ($user) {
+                    $message->to($user->email)
+                        ->subject('Xác minh địa chỉ email - The Library');
+                }
+            );
+        } catch (\Throwable $e) {
+            // Non-critical — registration succeeds even if email fails
+        }
+    }
+
+    public function verifyEmail(Request $request)
+    {
+        $token = $request->query('token');
+        if (!$token) {
+            return response()->json(['message' => 'Token không hợp lệ.', 'error' => 'invalid'], 422);
+        }
+
+        $parts = explode('.', $token, 2);
+        if (count($parts) !== 2) {
+            return response()->json(['message' => 'Token không hợp lệ.', 'error' => 'invalid'], 422);
+        }
+
+        [$payload, $sig] = $parts;
+        $expected = hash_hmac('sha256', $payload, config('app.key'));
+        if (!hash_equals($expected, $sig)) {
+            return response()->json(['message' => 'Token không hợp lệ.', 'error' => 'invalid'], 422);
+        }
+
+        $data = json_decode(base64_decode($payload), true);
+        if (!$data || empty($data['email']) || empty($data['expires_at'])) {
+            return response()->json(['message' => 'Token không hợp lệ.', 'error' => 'invalid'], 422);
+        }
+
+        if ($data['expires_at'] < now()->timestamp) {
+            return response()->json([
+                'message' => 'Link xác minh đã hết hạn.',
+                'error'   => 'expired',
+                'email'   => $data['email'],
+            ], 422);
+        }
+
+        $user = User::where('email', $data['email'])->first();
+        if (!$user) {
+            return response()->json(['message' => 'Tài khoản không tồn tại.', 'error' => 'not_found'], 404);
+        }
+
+        $roleName = $user->role ? $user->role->role_name : 'reader';
+
+        if ($user->email_verified_at) {
+            $autoToken = $user->createToken("{$roleName}-token")->plainTextToken;
+            return response()->json([
+                'message' => 'Email đã được xác minh trước đó.',
+                'error'   => 'already_verified',
+                'token'   => $autoToken,
+                'user_id' => $user->user_id,
+                'role'    => $roleName,
+            ]);
+        }
+
+        $user->email_verified_at = now();
+        $user->save();
+
+        $autoToken = $user->createToken("{$roleName}-token")->plainTextToken;
+        return response()->json([
+            'message' => 'Email đã được xác minh thành công.',
+            'success' => true,
+            'token'   => $autoToken,
+            'user_id' => $user->user_id,
+            'role'    => $roleName,
+        ]);
+    }
+
+    public function resendVerification(Request $request)
+    {
+        $request->validate(['email' => 'required|email']);
+
+        $key = 'verify_resend:' . strtolower($request->email);
+        if (RateLimiter::tooManyAttempts($key, 3)) {
+            $seconds = RateLimiter::availableIn($key);
+            return response()->json([
+                'message' => "Vui lòng chờ {$seconds} giây trước khi gửi lại.",
+                'error'   => 'rate_limited',
+            ], 429);
+        }
+        RateLimiter::hit($key, 600);
+
+        $user = User::where('email', $request->email)->first();
+
+        if (!$user || $user->email_verified_at) {
+            // Don't reveal if email exists or is already verified
+            return response()->json(['message' => 'Nếu email tồn tại và chưa xác minh, link xác minh sẽ được gửi.']);
+        }
+
+        $this->sendVerificationEmail($user);
+
+        return response()->json(['message' => 'Nếu email tồn tại và chưa xác minh, link xác minh sẽ được gửi.']);
     }
 }
