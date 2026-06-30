@@ -213,6 +213,126 @@ class BookService
         ];
     }
 
+    public function createReservation(int $userId, int $bookId): array
+    {
+        return DB::transaction(function () use ($userId, $bookId) {
+            $book = DB::table('books')
+                ->where('book_id', $bookId)
+                ->lockForUpdate()
+                ->first();
+
+            if (!$book) {
+                return [
+                    'success' => false,
+                    'error'   => 'book_not_found',
+                    'message' => "Không tìm thấy sách với ID {$bookId}.",
+                ];
+            }
+
+            $card = DB::table('library_cards')->where('user_id', $userId)->first();
+            if (!$card) {
+                return [
+                    'success' => false,
+                    'error'   => 'no_card',
+                    'message' => 'Bạn chưa có thẻ thư viện. Vui lòng đăng ký thẻ tại quầy thư viện.',
+                ];
+            }
+            if ((int) $card->status === 0) {
+                return [
+                    'success' => false,
+                    'error'   => 'card_locked',
+                    'message' => 'Thẻ thư viện của bạn đã bị khóa. Vui lòng liên hệ thủ thư.',
+                ];
+            }
+            if ($card->expiry_date < now()->toDateString()) {
+                return [
+                    'success' => false,
+                    'error'   => 'card_expired',
+                    'message' => 'Thẻ thư viện của bạn đã hết hạn. Vui lòng gia hạn thẻ tại quầy.',
+                ];
+            }
+
+            $availableCopies = DB::table('book_copies')
+                ->where('book_id', $bookId)
+                ->where('status', 'available')
+                ->count();
+
+            if ($availableCopies > 0) {
+                return [
+                    'success'          => false,
+                    'error'            => 'book_available',
+                    'title'            => $book->title,
+                    'available_copies' => $availableCopies,
+                    'message'          => "Sách \"{$book->title}\" hiện còn {$availableCopies} bản có thể mượn trực tiếp tại quầy — không cần đặt trước.",
+                ];
+            }
+
+            $existing = DB::table('reservations')
+                ->where('user_id', $userId)
+                ->where('book_id', $bookId)
+                ->whereIn('status', ['waiting', 'ready'])
+                ->lockForUpdate()
+                ->first();
+
+            if ($existing) {
+                return [
+                    'success'        => false,
+                    'error'          => 'already_reserved',
+                    'already_reserved' => true,
+                    'title'          => $book->title,
+                    'queue_position' => (int) $existing->queue_position,
+                    'message'        => "Bạn đã đặt trước sách \"{$book->title}\" (vị trí {$existing->queue_position} trong hàng chờ). Vui lòng chờ thông báo.",
+                ];
+            }
+
+            $maxPerUser = (int) (DB::table('system_settings')
+                ->where('config_key', 'max_reservations_per_user')
+                ->value('config_value') ?? 3);
+
+            $activeCount = DB::table('reservations')
+                ->where('user_id', $userId)
+                ->whereIn('status', ['waiting', 'ready'])
+                ->count();
+
+            if ($activeCount >= $maxPerUser) {
+                return [
+                    'success' => false,
+                    'error'   => 'limit_exceeded',
+                    'message' => "Bạn đã đặt trước {$activeCount}/{$maxPerUser} cuốn sách — đã đạt giới hạn. Vui lòng hủy bớt trước khi đặt thêm.",
+                ];
+            }
+
+            $nextPosition = (int) DB::table('reservations')
+                ->where('book_id', $bookId)
+                ->whereIn('status', ['waiting', 'ready'])
+                ->max('queue_position') + 1;
+
+            $reservationId = DB::table('reservations')->insertGetId([
+                'user_id'        => $userId,
+                'book_id'        => $bookId,
+                'queue_position' => $nextPosition,
+                'status'         => 'waiting',
+                'notified_at'    => null,
+                'expired_at'     => null,
+                'created_at'     => now(),
+            ]);
+
+            $inserted = DB::table('reservations')
+                ->where('reservation_id', $reservationId)
+                ->first();
+
+            return [
+                'success'        => true,
+                'reservation_id' => (int) $inserted->reservation_id,
+                'book_id'        => (int) $inserted->book_id,
+                'title'          => $book->title,
+                'queue_position' => (int) $inserted->queue_position,
+                'status'         => $inserted->status,
+                'message'        => "Đặt trước sách \"{$book->title}\" thành công! Bạn đang ở vị trí {$inserted->queue_position} trong hàng chờ. Chúng tôi sẽ thông báo khi sách sẵn sàng.",
+            ];
+        });
+    }
+
     public function getBookAvailability(int $bookId): ?array
     {
         $book = DB::table('books as b')

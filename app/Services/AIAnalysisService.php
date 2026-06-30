@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 
 class AIAnalysisService
 {
@@ -46,10 +47,25 @@ class AIAnalysisService
 
         $body = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
 
+        Log::info('[KEY_TRACE] generate() called', [
+            'key_prefix'   => substr($this->apiKey, 0, 12) . '...',
+            'key_length'   => strlen($this->apiKey),
+            'endpoint'     => $this->endpoint,
+            'config_key'   => substr(config('services.gemini.key') ?? '', 0, 12) . '...',
+        ]);
+
         $response = Http::timeout(30)
             ->withHeaders(['Accept' => 'application/json'])
             ->withBody($body, 'application/json')
             ->post($this->endpoint . '?key=' . $this->apiKey);
+
+        Log::info('[KEY_TRACE] Gemini HTTP response', [
+            'status'         => $response->status(),
+            'failed'         => $response->failed(),
+            'candidates'     => count($response->json()['candidates'] ?? []),
+            'top_keys'       => array_keys($response->json() ?? []),
+            'body_preview'   => mb_substr($response->body(), 0, 500),
+        ]);
 
         if ($response->status() === 429) {
             throw new \RuntimeException('RATE_LIMIT_EXCEEDED', 429);
@@ -116,6 +132,32 @@ class AIAnalysisService
                     : 'Hiện không có bản nào để mượn.';
 
                 $text = implode("\n", $lines);
+            } elseif ($toolName === 'reserve_book') {
+                $success = (bool) ($result['success'] ?? false);
+                $title   = $result['title']   ?? 'sách này';
+                $error   = $result['error']   ?? '';
+                $msg     = $result['message'] ?? '';
+
+                if ($success) {
+                    $pos   = (int) ($result['queue_position'] ?? 1);
+                    $resId = (int) ($result['reservation_id'] ?? 0);
+                    $text  = "[MOCK] Đặt trước sách **{$title}** thành công!"
+                           . " Bạn đang ở vị trí **{$pos}** trong hàng chờ."
+                           . ' Chúng tôi sẽ thông báo khi sách sẵn sàng để mượn.'
+                           . ($resId > 0 ? " (Mã đặt trước: #{$resId})" : '');
+                } elseif ($error === 'already_reserved') {
+                    $pos  = (int) ($result['queue_position'] ?? 0);
+                    $text = "[MOCK] Bạn đã đặt trước sách **{$title}** rồi"
+                          . ($pos > 0 ? " (vị trí {$pos} trong hàng chờ)" : '')
+                          . '. Vui lòng chờ thông báo khi sách sẵn sàng.';
+                } elseif ($error === 'book_available') {
+                    $copies = (int) ($result['available_copies'] ?? 0);
+                    $text   = "[MOCK] Sách **{$title}** hiện còn {$copies} bản có thể mượn trực tiếp tại quầy — bạn không cần đặt trước!";
+                } elseif ($error === 'requires_auth') {
+                    $text = '[MOCK] Bạn cần đăng nhập để sử dụng chức năng đặt trước sách.';
+                } else {
+                    $text = "[MOCK] Không thể đặt trước: {$msg}";
+                }
             } elseif ($toolName === 'check_book_availability') {
                 $title     = $result['title']            ?? 'Không rõ';
                 $available = (int) ($result['available_copies'] ?? 0);
@@ -138,6 +180,26 @@ class AIAnalysisService
                         $text .= ' Bạn có thể đặt trước để được thông báo khi sách được trả lại.';
                     }
                 }
+            } elseif ($toolName === 'resolve_context_book') {
+                $found  = (bool) ($result['found']   ?? false);
+                $bookId = (int)  ($result['book_id'] ?? 0);
+
+                if ($found && $bookId > 0) {
+                    return [
+                        'candidates' => [[
+                            'content' => [
+                                'parts' => [[
+                                    'functionCall' => [
+                                        'name' => 'reserve_book',
+                                        'args' => ['book_id' => $bookId],
+                                    ],
+                                ]],
+                            ],
+                            'finishReason' => 'STOP',
+                        ]],
+                    ];
+                }
+                $text = '[MOCK] Tôi không tìm thấy thông tin sách nào trong lịch sử hội thoại. Bạn muốn đặt trước sách nào?';
             } else {
                 // search_books result
                 $found  = $result['found']  ?? false;
@@ -183,6 +245,25 @@ class AIAnalysisService
                                     'parts' => [[
                                         'functionCall' => [
                                             'name' => 'check_book_availability',
+                                            'args' => ['book_id' => $bookId],
+                                        ],
+                                    ]],
+                                ],
+                                'finishReason' => 'STOP',
+                            ]],
+                        ];
+                    }
+                }
+
+                if ($found && $count > 0 && !empty($books) && $this->isReservationQuestion($originalUserText)) {
+                    $bookId = (int) ($books[0]['book_id'] ?? 0);
+                    if ($bookId > 0) {
+                        return [
+                            'candidates' => [[
+                                'content' => [
+                                    'parts' => [[
+                                        'functionCall' => [
+                                            'name' => 'reserve_book',
                                             'args' => ['book_id' => $bookId],
                                         ],
                                     ]],
@@ -250,6 +331,38 @@ class AIAnalysisService
             ];
         }
 
+        if ($this->isReservationQuestion($userText) && preg_match('/(?:id|sách số|book_id)\s*[#]?\s*(\d+)/iu', $userText, $m)) {
+            return [
+                'candidates' => [[
+                    'content' => [
+                        'parts' => [[
+                            'functionCall' => [
+                                'name' => 'reserve_book',
+                                'args' => ['book_id' => (int) $m[1]],
+                            ],
+                        ]],
+                    ],
+                    'finishReason' => 'STOP',
+                ]],
+            ];
+        }
+
+        if ($this->isReservationQuestion($userText) && $this->isContextualPronoun($userText)) {
+            return [
+                'candidates' => [[
+                    'content' => [
+                        'parts' => [[
+                            'functionCall' => [
+                                'name' => 'resolve_context_book',
+                                'args' => [],
+                            ],
+                        ]],
+                    ],
+                    'finishReason' => 'STOP',
+                ]],
+            ];
+        }
+
         if ($this->isIntroQuestion($userText) && preg_match('/(?:id|sách số|book_id)\s*[#]?\s*(\d+)/iu', $userText, $m)) {
             return [
                 'candidates' => [[
@@ -297,6 +410,39 @@ class AIAnalysisService
         ];
         foreach ($keywords as $kw) {
             if (str_contains($lower, $kw)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private function isReservationQuestion(string $text): bool
+    {
+        $lower    = mb_strtolower($text);
+        $keywords = [
+            'đặt trước', 'đặt sách', 'giữ sách', 'giữ giúp', 'reserve',
+            'đăng ký mượn', 'xếp hàng chờ', 'muốn đặt', 'đặt cho tôi',
+            'giữ cho tôi', 'đặt cuốn', 'đặt ngay',
+        ];
+        foreach ($keywords as $kw) {
+            if (str_contains($lower, $kw)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private function isContextualPronoun(string $text): bool
+    {
+        $lower    = mb_strtolower($text);
+        $patterns = [
+            'cuốn đó', 'sách đó', 'cuốn này', 'sách này',
+            'cuốn kia', 'sách kia', 'cuốn ấy', 'sách ấy',
+            'quyển đó', 'quyển này', 'quyển kia',
+            'cuốn sách đó', 'cuốn sách này',
+        ];
+        foreach ($patterns as $p) {
+            if (str_contains($lower, $p)) {
                 return true;
             }
         }
