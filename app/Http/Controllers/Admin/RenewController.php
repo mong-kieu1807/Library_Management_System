@@ -82,6 +82,9 @@ class RenewController extends Controller
      * POST /private/v1/checkout/renew
      *
      * Gia hạn ngày trả sách.
+     * Sau khi gia hạn thành công:
+     *   - Tìm borrow_renewal_requests pending tương ứng → mark approved
+     *   - Tạo notification cho reader (nếu có pending request)
      *
      * Transaction flow:
      *   1. Đọc max_renew_times từ system_settings (ngoài tx)
@@ -89,6 +92,7 @@ class RenewController extends Controller
      *   3. Safety validate: ownership, return_date IS NULL, renew_count, reservation
      *   4. INCREMENT borrow_details.renew_count (bulk, 1 query)
      *   5. UPDATE borrow_transactions.due_date += extend_days (per borrow_id)
+     *   6. Mark pending borrow_renewal_requests approved + tạo notification
      */
     public function renewBook(RenewBookRequest $request)
     {
@@ -97,12 +101,13 @@ class RenewController extends Controller
             ->where('config_key', 'max_renew_times')
             ->value('config_value') ?: 2;
 
+        $adminId    = auth()->id();
         $userId     = (int) $request->input('user_id');
         $copyIds    = array_values(array_unique(array_map('intval', $request->input('copy_ids', []))));
         $extendDays = (int) $request->input('extend_days');
 
         try {
-            $result = DB::transaction(function () use ($userId, $copyIds, $extendDays, $maxRenewTimes) {
+            $result = DB::transaction(function () use ($userId, $copyIds, $extendDays, $maxRenewTimes, $adminId) {
                 // [1] LOCK — borrow_details + borrow_transactions + book_copies
                 $details = DB::table('borrow_details as bd')
                     ->join('borrow_transactions as bt', 'bt.borrow_id', '=', 'bd.borrow_id')
@@ -145,7 +150,7 @@ class RenewController extends Controller
                     ->increment('renew_count');
 
                 // [4] UPDATE due_date per unique borrow_transaction
-                $borrowGroups       = $details->groupBy('borrow_id');
+                $borrowGroups        = $details->groupBy('borrow_id');
                 $renewedTransactions = [];
 
                 foreach ($borrowGroups as $borrowId => $group) {
@@ -163,6 +168,32 @@ class RenewController extends Controller
                         'borrow_id'    => (int) $borrowId,
                         'new_due_date' => $newDue->toDateString(),
                     ];
+
+                    // [5] Mark pending borrow_renewal_request approved + tạo notification
+                    $pendingRequest = DB::table('borrow_renewal_requests')
+                        ->where('borrow_id', (int) $borrowId)
+                        ->where('user_id', $userId)
+                        ->where('status', 'pending')
+                        ->first();
+
+                    if ($pendingRequest) {
+                        DB::table('borrow_renewal_requests')
+                            ->where('request_id', $pendingRequest->request_id)
+                            ->update([
+                                'status'      => 'approved',
+                                'reviewed_by' => $adminId,
+                            ]);
+
+                        DB::table('notifications')->insert([
+                            'user_id'    => $userId,
+                            'title'      => 'Gia hạn sách thành công',
+                            'content'    => 'Yêu cầu gia hạn sách của bạn đã được duyệt. Hạn trả mới: '
+                                . $newDue->format('d/m/Y') . '.',
+                            'type'       => 'borrow_renewal',
+                            'is_read'    => 0,
+                            'created_at' => now(),
+                        ]);
+                    }
                 }
 
                 return [

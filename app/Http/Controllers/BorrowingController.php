@@ -39,7 +39,14 @@ class BorrowingController extends Controller
             ->orderBy('bt.due_date', 'asc')
             ->get();
 
-        $data = $rows->map(function ($row) {
+        // Lấy borrow_id nào đang có pending renewal request
+        $pendingBorrowIds = DB::table('borrow_renewal_requests')
+            ->where('user_id', $userId)
+            ->where('status', 'pending')
+            ->pluck('borrow_id')
+            ->toArray();
+
+        $data = $rows->map(function ($row) use ($pendingBorrowIds) {
             $days = (int) $row->days_remaining;
 
             if ($days > 3) {
@@ -51,15 +58,16 @@ class BorrowingController extends Controller
             }
 
             return [
-                'borrow_id'      => $row->borrow_id,
-                'copy_id'        => $row->copy_id,
-                'book_id'        => $row->book_id,
-                'title'          => $row->title,
-                'cover_image'    => $row->cover_image,
-                'borrow_date'    => $row->borrow_date,
-                'due_date'       => $row->due_date,
-                'days_remaining' => $days,
-                'warning_color'  => $color,
+                'borrow_id'        => $row->borrow_id,
+                'copy_id'          => $row->copy_id,
+                'book_id'          => $row->book_id,
+                'title'            => $row->title,
+                'cover_image'      => $row->cover_image,
+                'borrow_date'      => $row->borrow_date,
+                'due_date'         => $row->due_date,
+                'days_remaining'   => $days,
+                'warning_color'    => $color,
+                'renewal_pending'  => in_array($row->borrow_id, $pendingBorrowIds),
             ];
         });
 
@@ -91,7 +99,7 @@ class BorrowingController extends Controller
                 DB::raw("DATE_FORMAT(bt.borrow_date, '%Y-%m-%d') as borrow_date"),
                 DB::raw("DATE_FORMAT(bt.due_date,    '%Y-%m-%d') as due_date"),
                 DB::raw("DATE_FORMAT(bd.return_date, '%Y-%m-%d') as return_date"),
-                'bt.renew_count',
+                'bd.renew_count',
                 DB::raw("GREATEST(0, DATEDIFF(bd.return_date, bt.due_date)) as days_late"),
             ])
             ->orderByDesc('bt.borrow_date')
@@ -122,14 +130,22 @@ class BorrowingController extends Controller
     /**
      * POST /v1/me/borrowing/{borrowId}/renew
      *
-     * Extends due_date by 7 days. Max 2 renewals per transaction.
-     * Blocked when: overdue, max renewals reached, other reader has active reservation.
+     * M4.2: Reader gửi yêu cầu gia hạn sách (pending).
+     * Admin sẽ duyệt qua POST /private/v1/checkout/renew.
+     *
+     * Validation:
+     *  - Giao dịch thuộc về user
+     *  - Còn sách chưa trả
+     *  - Chưa quá hạn
+     *  - Còn lượt gia hạn (max_renew_times từ system_settings)
+     *  - Không có người khác đặt trước
+     *  - Chưa có pending request
      */
     public function renew(Request $request, int $borrowId)
     {
         $userId = auth()->id();
 
-        // 1. Verify the transaction belongs to this user
+        // 1. Verify giao dịch thuộc về user
         $transaction = DB::table('borrow_transactions')
             ->where('borrow_id', $borrowId)
             ->where('user_id', $userId)
@@ -139,7 +155,7 @@ class BorrowingController extends Controller
             return response()->json(['message' => 'Không tìm thấy giao dịch mượn.'], 404);
         }
 
-        // 2. Verify at least one unreturned copy exists
+        // 2. Còn sách chưa trả
         $hasUnreturned = DB::table('borrow_details')
             ->where('borrow_id', $borrowId)
             ->whereNull('return_date')
@@ -149,17 +165,26 @@ class BorrowingController extends Controller
             return response()->json(['message' => 'Giao dịch này không còn sách đang mượn để gia hạn.'], 422);
         }
 
-        // 3. Reject if already overdue
+        // 3. Không gia hạn nếu đã quá hạn
         if (date('Y-m-d') > $transaction->due_date) {
             return response()->json(['message' => 'Không thể gia hạn sách đã quá hạn.'], 422);
         }
 
-        // 4. Reject if renewal limit reached
-        if ((int) $transaction->renew_count >= 2) {
+        // 4. Kiểm tra giới hạn gia hạn (lấy từ borrow_details)
+        $maxRenewTimes = (int) DB::table('system_settings')
+            ->where('config_key', 'max_renew_times')
+            ->value('config_value') ?: 2;
+
+        $maxRenewCount = DB::table('borrow_details')
+            ->where('borrow_id', $borrowId)
+            ->whereNull('return_date')
+            ->max('renew_count');
+
+        if ((int) $maxRenewCount >= $maxRenewTimes) {
             return response()->json(['message' => 'Bạn đã sử dụng hết số lần gia hạn.'], 422);
         }
 
-        // 5. Reject if another reader has an active reservation for any book in this transaction
+        // 5. Kiểm tra reservation của người khác
         $bookIds = DB::table('borrow_details as bd')
             ->join('book_copies as bc', 'bc.copy_id', '=', 'bd.copy_id')
             ->where('bd.borrow_id', $borrowId)
@@ -176,35 +201,29 @@ class BorrowingController extends Controller
             return response()->json(['message' => 'Sách hiện đã có độc giả khác đặt trước.'], 422);
         }
 
-        // 6. Compute new values before the transaction
-        $newDueDate    = date('Y-m-d', strtotime($transaction->due_date . ' +7 days'));
-        $newRenewCount = (int) $transaction->renew_count + 1;
+        // 6. Kiểm tra đã có pending request chưa
+        $hasPending = DB::table('borrow_renewal_requests')
+            ->where('borrow_id', $borrowId)
+            ->where('user_id', $userId)
+            ->where('status', 'pending')
+            ->exists();
 
-        // 7. Persist inside a DB transaction
-        DB::transaction(function () use ($borrowId, $newDueDate, $newRenewCount) {
-            DB::table('borrow_transactions')
-                ->where('borrow_id', $borrowId)
-                ->update([
-                    'due_date'    => $newDueDate,
-                    'renew_count' => $newRenewCount,
-                    'updated_at'  => now(),
-                ]);
+        if ($hasPending) {
+            return response()->json(['message' => 'Yêu cầu gia hạn đang chờ thư viện duyệt.'], 422);
+        }
 
-            DB::table('borrow_details')
-                ->where('borrow_id', $borrowId)
-                ->whereNull('return_date')
-                ->increment('renew_count');
-        });
+        // 7. Tạo pending renewal request
+        $requestId = DB::table('borrow_renewal_requests')->insertGetId([
+            'borrow_id'    => $borrowId,
+            'user_id'      => $userId,
+            'status'       => 'pending',
+            'requested_at' => now(),
+        ]);
 
         return response()->json([
-            'results' => [
-                'object' => [
-                    'borrowId'   => $borrowId,
-                    'renewCount' => $newRenewCount,
-                    'newDueDate' => $newDueDate,
-                ],
-            ],
-            'message' => 'Gia hạn thành công.',
-        ]);
+            'message'    => 'Yêu cầu gia hạn đã được gửi, đang chờ thư viện duyệt.',
+            'request_id' => $requestId,
+            'pending'    => true,
+        ], 201);
     }
 }
