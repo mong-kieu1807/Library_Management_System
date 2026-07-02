@@ -12,5 +12,6 @@ Artisan::command('inspire', function () {
 Schedule::command('reservations:expire')->dailyAt('00:05');
 Schedule::command('books:remind-3days')->dailyAt('08:00');
 Schedule::command('books:remind-1days')->dailyAt('08:00');
+Schedule::command('library:weekly-summary')->weekly()->mondays()->at('08:00');
 
 Schedule::command('books:overdue-reminder')->dailyAt('08:10');
