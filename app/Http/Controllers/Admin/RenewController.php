@@ -87,6 +87,9 @@ class RenewController extends Controller
      * POST /private/v1/checkout/renew
      *
      * Gia hạn ngày trả sách.
+     * Sau khi gia hạn thành công:
+     *   - Tìm borrow_renewal_requests pending tương ứng → mark approved
+     *   - Tạo notification cho reader (nếu có pending request)
      *
      * Transaction flow:
      *   1. Đọc max_renew_times từ system_settings (ngoài tx)
@@ -94,6 +97,7 @@ class RenewController extends Controller
      *   3. Safety validate: ownership, return_date IS NULL, renew_count, reservation
      *   4. INCREMENT borrow_details.renew_count (bulk, 1 query)
      *   5. UPDATE borrow_transactions.due_date += extend_days (per borrow_id)
+     *   6. Mark pending borrow_renewal_requests approved + tạo notification
      */
     public function renewBook(RenewBookRequest $request)
     {
@@ -151,7 +155,7 @@ class RenewController extends Controller
                     ->increment('renew_count');
 
                 // [4] UPDATE due_date per unique borrow_transaction
-                $borrowGroups       = $details->groupBy('borrow_id');
+                $borrowGroups        = $details->groupBy('borrow_id');
                 $renewedTransactions = [];
 
                 foreach ($borrowGroups as $borrowId => $group) {
@@ -172,6 +176,7 @@ class RenewController extends Controller
 
                     // [5] Nếu có borrow_renewal_request đang pending khớp giao dịch này
                     // (Reader đã gửi yêu cầu gia hạn) → duyệt luôn + tạo notification.
+                    // [5] Mark pending borrow_renewal_request approved + tạo notification
                     $pendingRequest = DB::table('borrow_renewal_requests')
                         ->where('borrow_id', (int) $borrowId)
                         ->where('user_id', $userId)
