@@ -19,6 +19,7 @@ class LibraryCard extends Model
     'expiry_date',
     'borrow_limit',
     'max_borrow_days',
+    'card_type',
     'status'
     ];
 }

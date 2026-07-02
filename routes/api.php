@@ -99,9 +99,17 @@ Route::middleware(['auth:sanctum', 'role:admin,librarian'])->group(function () {
     Route::delete('v1/book-copies/{id}', [App\Http\Controllers\Admin\BookCopyController::class, 'destroy']);
     Route::post('v1/book-copies/import', [App\Http\Controllers\Admin\BookCopyController::class, 'importCopies']);
     Route::get('v1/book-copies/summary-report', [App\Http\Controllers\Admin\BookCopyController::class, 'summaryReport']);
+
 });
 
 Route::get('v1/library-card/{userId}', [LibraryCardController::class, 'show']);
+
+// Library Card Renewal — Admin (M1.6)
+Route::middleware(['auth:sanctum', 'role:admin,librarian'])->prefix('private/v1/library-card-renewal')->group(function () {
+    Route::get('/', [App\Http\Controllers\Admin\LibraryCardController::class, 'listRequests']);
+    Route::post('/{id}/approve', [App\Http\Controllers\Admin\LibraryCardController::class, 'approve']);
+    Route::post('/{id}/reject', [App\Http\Controllers\Admin\LibraryCardController::class, 'reject']);
+});
 
 Route::prefix('v1/profile')->group(function () {
     // Change-password: auth handled in controller via PersonalAccessToken::findToken
@@ -118,6 +126,10 @@ Route::prefix('v1/profile')->group(function () {
     });
 });
 Route::middleware('auth:sanctum')->prefix('v1/me')->group(function () {
+    // Library Card renewal (M1.6)
+    Route::post('/library-card/renewal-request', [LibraryCardController::class, 'submitRenewalRequest']);
+    Route::get('/library-card/renewal-requests', [LibraryCardController::class, 'myRenewalRequests']);
+
     Route::get('/borrowing', [BorrowingController::class, 'index']);
     Route::get('/borrowing/history', [BorrowingController::class, 'history']);
     Route::post('/borrowing/{borrowId}/renew', [BorrowingController::class, 'renew']);
@@ -161,6 +173,7 @@ Route::middleware(['auth:sanctum', 'role:admin,librarian'])->prefix('private/v1'
         Route::post('/',              [BorrowTransactionController::class, 'store']);
         Route::get('/renew-list',     [RenewController::class, 'getRenewList']);
         Route::post('/renew',         [RenewController::class, 'renewBook']);
+        Route::post('/renew/{id}/reject', [RenewController::class, 'rejectBook']);
     });
 
     // Book Return (Check-in)
@@ -222,4 +235,35 @@ Route::middleware(['auth:sanctum', 'role:admin'])->prefix('private/v1')->group(f
     // Dashboard Routes (admin only — legacy)
     Route::get('/dashboard', [App\Http\Controllers\Admin\DashboardController::class, 'getDashboardData']);
     Route::get('/dashboard/recent-activities', [App\Http\Controllers\Admin\DashboardController::class, 'getRecentActivities']);
+
+    // Module 7 — Cài đặt hệ thống (chuẩn hóa: cùng middleware role:admin,
+    // cùng prefix private/v1, cùng namespace Admin cho toàn bộ Module 7)
+    Route::get('/system-settings', [App\Http\Controllers\Admin\SystemSettingController::class, 'index']);
+    Route::post('/system-settings/update', [App\Http\Controllers\Admin\SystemSettingController::class, 'update']);
+    Route::put('/system-settings/{id}', [App\Http\Controllers\Admin\SystemSettingController::class, 'update']);
+
+    Route::get('/holidays', [App\Http\Controllers\Admin\HolidayController::class, 'index']);
+    Route::post('/holidays', [App\Http\Controllers\Admin\HolidayController::class, 'store']);
+    Route::put('/holidays/{id}', [App\Http\Controllers\Admin\HolidayController::class, 'update']);
+    Route::delete('/holidays/{id}', [App\Http\Controllers\Admin\HolidayController::class, 'destroy']);
+
+    Route::get('/activity-logs', [App\Http\Controllers\Admin\AuditLogController::class, 'index']);
+    Route::get('/activity-logs/{id}', [App\Http\Controllers\Admin\AuditLogController::class, 'show']);
+
+    // Email Template Management (Phase 5.5). Controller có sẵn ở
+    // App\Http\Controllers\EmailTemplateController (không có sub-namespace Admin
+    // như các controller Module 7 khác) — tái sử dụng nguyên trạng, không đổi chỗ.
+    Route::get('/email-templates', [App\Http\Controllers\EmailTemplateController::class, 'index']);
+    Route::get('/email-templates/{id}', [App\Http\Controllers\EmailTemplateController::class, 'show']);
+    Route::put('/email-templates/{id}', [App\Http\Controllers\EmailTemplateController::class, 'update']);
+
+    // Backup & Restore — Phase 6A (chỉ backup, chưa làm restore).
+    // Ràng buộc {filename} chỉ cho ký tự an toàn + đuôi .sql (phòng thủ thêm 1 lớp
+    // ở tầng route, lớp chính chặn path traversal nằm trong BackupService::resolvePath()).
+    Route::get('/backups', [App\Http\Controllers\Admin\BackupController::class, 'index']);
+    Route::post('/backups/create', [App\Http\Controllers\Admin\BackupController::class, 'create']);
+    Route::get('/backups/download/{filename}', [App\Http\Controllers\Admin\BackupController::class, 'download'])
+        ->where('filename', '[\w\-\.]+\.sql');
+    Route::delete('/backups/{filename}', [App\Http\Controllers\Admin\BackupController::class, 'destroy'])
+        ->where('filename', '[\w\-\.]+\.sql');
 });

@@ -122,7 +122,8 @@ class BorrowingController extends Controller
     /**
      * POST /v1/me/borrowing/{borrowId}/renew
      *
-     * Extends due_date by 7 days. Max 2 renewals per transaction.
+     * Extends due_date by renew_extend_days. Max max_renew_times renewals per transaction
+     * (both read from system_settings, see Module 7 — Cài đặt hệ thống).
      * Blocked when: overdue, max renewals reached, other reader has active reservation.
      */
     public function renew(Request $request, int $borrowId)
@@ -154,8 +155,15 @@ class BorrowingController extends Controller
             return response()->json(['message' => 'Không thể gia hạn sách đã quá hạn.'], 422);
         }
 
+        // Module 7: đọc max_renew_times / renew_extend_days từ system_settings thay vì hard-code
+        $renewSettings = DB::table('system_settings')
+            ->whereIn('config_key', ['max_renew_times', 'renew_extend_days'])
+            ->pluck('config_value', 'config_key');
+        $maxRenewTimes  = (int) ($renewSettings['max_renew_times'] ?? 2);
+        $renewExtendDays = (int) ($renewSettings['renew_extend_days'] ?? 7);
+
         // 4. Reject if renewal limit reached
-        if ((int) $transaction->renew_count >= 2) {
+        if ((int) $transaction->renew_count >= $maxRenewTimes) {
             return response()->json(['message' => 'Bạn đã sử dụng hết số lần gia hạn.'], 422);
         }
 
@@ -177,7 +185,7 @@ class BorrowingController extends Controller
         }
 
         // 6. Compute new values before the transaction
-        $newDueDate    = date('Y-m-d', strtotime($transaction->due_date . ' +7 days'));
+        $newDueDate    = date('Y-m-d', strtotime($transaction->due_date . " +{$renewExtendDays} days"));
         $newRenewCount = (int) $transaction->renew_count + 1;
 
         // 7. Persist inside a DB transaction
