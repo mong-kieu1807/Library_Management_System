@@ -23,6 +23,7 @@ use App\Http\Controllers\Admin\HistoryController;
 use App\Http\Controllers\AIController;
 use App\Http\Controllers\Admin\ReportController;
 use App\Http\Controllers\Admin\ExportController;
+use App\Http\Controllers\NotificationController;
 
 
 Route::prefix('v1/auth')->group(function () {
@@ -118,6 +119,15 @@ Route::prefix('v1/profile')->group(function () {
     });
 });
 Route::middleware('auth:sanctum')->prefix('v1/me')->group(function () {
+    // Notifications
+    Route::get('/notifications', [NotificationController::class, 'index']);
+    Route::patch('/notifications/read-all', [NotificationController::class, 'markAllRead']);
+    Route::patch('/notifications/{id}/read', [NotificationController::class, 'markRead']);
+
+    // Library Card renewal (M1.6)
+    Route::post('/library-card/renewal-request', [LibraryCardController::class, 'submitRenewalRequest']);
+    Route::get('/library-card/renewal-requests', [LibraryCardController::class, 'myRenewalRequests']);
+
     Route::get('/borrowing', [BorrowingController::class, 'index']);
     Route::get('/borrowing/history', [BorrowingController::class, 'history']);
     Route::post('/borrowing/{borrowId}/renew', [BorrowingController::class, 'renew']);
@@ -206,6 +216,13 @@ Route::middleware(['auth:sanctum', 'role:admin,librarian'])->prefix('private/v1/
     Route::get('/top-categories',        [ReportController::class, 'topCategories']);          // Phase 2 (categories)
     Route::get('/fine-revenue',          [ReportController::class, 'fineRevenue']);            // Phase 4 (fine)
     Route::get('/fine-reasons',          [ReportController::class, 'fineReasons']);            // Phase 4 (fine)
+});
+
+// Library Card Renewal — Admin (M1.6)
+Route::middleware(['auth:sanctum', 'role:admin,librarian'])->prefix('private/v1/library-card-renewal')->group(function () {
+    Route::get('/', [App\Http\Controllers\Admin\LibraryCardController::class, 'listRequests']);
+    Route::post('/{id}/approve', [App\Http\Controllers\Admin\LibraryCardController::class, 'approve']);
+    Route::post('/{id}/reject', [App\Http\Controllers\Admin\LibraryCardController::class, 'reject']);
 });
 
 Route::middleware(['auth:sanctum', 'role:admin'])->prefix('private/v1')->group(function () {
