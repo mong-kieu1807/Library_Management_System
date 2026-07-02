@@ -21,6 +21,7 @@ use App\Http\Controllers\Admin\ReservationController as AdminReservationControll
 use App\Http\Controllers\Admin\ReceiptController;
 use App\Http\Controllers\Admin\HistoryController;
 use App\Http\Controllers\AIController;
+use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\Admin\ReportController;
 use App\Http\Controllers\Admin\ExportController;
 

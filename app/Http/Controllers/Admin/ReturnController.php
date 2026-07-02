@@ -8,6 +8,8 @@ use Illuminate\Http\Request;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\ReturnBookRequest;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Mail;
+
 
 class ReturnController extends Controller
 {
@@ -225,6 +227,66 @@ class ReturnController extends Controller
                         'type' => 'return',
                         'is_read' => 0,
                     ]);
+                                foreach ($copyIds as $copyId) {
+
+                $bookId = DB::table('book_copies')
+                    ->where('copy_id', $copyId)
+                    ->value('book_id');
+
+                $reservation = DB::table('reservations')
+                    ->where('book_id', $bookId)
+                    ->where('status', 'waiting')
+                    ->orderBy('queue_position')
+                    ->first();
+
+                if (!$reservation) {
+                    continue;
+                }
+
+                DB::table('reservations')
+                    ->where('reservation_id', $reservation->reservation_id)
+                    ->update([
+                        'status' => 'ready',
+                        'notified_at' => now(),
+                        'expired_at' => now()->addDays(2),
+                    ]);
+
+                $user = DB::table('users')
+                    ->where('user_id', $reservation->user_id)
+                    ->first();
+
+                $book = DB::table('books')
+                    ->where('book_id', $bookId)
+                    ->first();
+
+                if ($user && $user->email) {
+
+                    Mail::raw(
+            "Xin chào {$user->full_name},
+
+            Sách bạn đã đặt trước hiện đã có sẵn.
+
+            Tên sách: {$book->title}
+
+            Vui lòng đến thư viện trong vòng 2 ngày để nhận sách.
+
+            Xin cảm ơn.",
+                    function ($message) use ($user) {
+                        $message
+                            ->to($user->email)
+                            ->subject('Sách đặt trước đã có sẵn');
+                    });
+
+                }
+
+                Notification::create([
+                    'user_id' => $reservation->user_id,
+                    'title' => 'Sách đặt trước đã có sẵn',
+                    'content' => "Sách \"{$book->title}\" đã có sẵn. Vui lòng đến nhận trong vòng 2 ngày.",
+                    'type' => 'reservation',
+                    'is_read' => 0,
+                ]);
+            }
                 return [
                     'return_date'          => $today->toDateString(),
                     'returned_books_count' => count($copyIds),
