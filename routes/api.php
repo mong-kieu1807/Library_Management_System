@@ -27,7 +27,6 @@ use App\Http\Controllers\Admin\ExportController;
 use App\Http\Controllers\Admin\AIBookDemandController;
 use App\Http\Controllers\Admin\FineController as AdminFineController;
 use App\Http\Controllers\Admin\PaymentController as AdminPaymentController;
-use App\Http\Controllers\NotificationController;
 
 
 Route::prefix('v1/auth')->group(function () {
@@ -304,10 +303,3 @@ Route::middleware(['auth:sanctum', 'role:admin'])->prefix('private/v1')->group(f
         ->where('filename', '[\w\-\.]+\.sql');
 });
 
-Route::prefix('v1/me')->middleware('auth:sanctum')->group(function () {
-
-    Route::get('/notifications', [NotificationController::class, 'index']);
-
-    Route::patch('/notifications/{id}/read', [NotificationController::class, 'markAsRead']);
-
-});

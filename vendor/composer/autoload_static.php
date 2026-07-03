@@ -712,10 +712,7 @@ class ComposerStaticInit53b5d56b3b7e3cbac1713e68c8850f6c
         'App\\Events\\ReservationReady' => __DIR__ . '/../..' . '/app/Events/ReservationReady.php',
         'App\\Helpers\\Google2FA' => __DIR__ . '/../..' . '/app/Helpers/Google2FA.php',
         'App\\Http\\Controllers\\AIController' => __DIR__ . '/../..' . '/app/Http/Controllers/AIController.php',
-<<<<<<< HEAD
-=======
         'App\\Http\\Controllers\\Admin\\AIBookDemandController' => __DIR__ . '/../..' . '/app/Http/Controllers/Admin/AIBookDemandController.php',
->>>>>>> d26087b800d5250709256420665559dfd85f3437
         'App\\Http\\Controllers\\Admin\\AIChatController' => __DIR__ . '/../..' . '/app/Http/Controllers/Admin/AIChatController.php',
         'App\\Http\\Controllers\\Admin\\AIRecommendationController' => __DIR__ . '/../..' . '/app/Http/Controllers/Admin/AIRecommendationController.php',
         'App\\Http\\Controllers\\Admin\\AuditLogController' => __DIR__ . '/../..' . '/app/Http/Controllers/Admin/AuditLogController.php',
