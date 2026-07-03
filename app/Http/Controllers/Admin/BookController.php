@@ -110,25 +110,39 @@ class BookController extends Controller
             'name' => $publisherName,
         ]);
 
-        $book = Book::create([
-            'title' => $bookData['title'] ?? null,
-            'isbn' => $isbn,
-            'publisher_id' => $publisher->publisher_id,
-            'author_id' => $author->author_id,
-            'publish_date' => $publishDate,
-            'pages' => $bookData['pageCount'] ?? null,
-            'description' => $bookData['description'] ?? null,
-            'cover_image' => $bookData['imageLinks']['thumbnail'] ?? null,
-            'language' => $bookData['language'] ?? null,
-            'avg_rating' => $bookData['averageRating'] ?? null,
-            'total_reviews' => $bookData['ratingsCount'] ?? null,
-            'replacement_cost' => 80000,
-            'dimensions' => '13x20cm',
-            'cover_type' => 'Bia mem',
-        ]);
-        $book->authors()->sync([$author->author_id]);
+        $book = DB::transaction(function () use ($bookData, $isbn, $publisher, $author, $publishDate) {
+            $book = Book::create([
+                'title' => $bookData['title'] ?? null,
+                'isbn' => $isbn,
+                'publisher_id' => $publisher->publisher_id,
+                'author_id' => $author->author_id,
+                'publish_date' => $publishDate,
+                'pages' => $bookData['pageCount'] ?? null,
+                'description' => $bookData['description'] ?? null,
+                'cover_image' => $bookData['imageLinks']['thumbnail'] ?? null,
+                'language' => $bookData['language'] ?? null,
+                'avg_rating' => $bookData['averageRating'] ?? null,
+                'total_reviews' => $bookData['ratingsCount'] ?? null,
+                'replacement_cost' => 80000,
+                'dimensions' => '13x20cm',
+                'cover_type' => 'Bia mem',
+            ]);
+            $book->authors()->sync([$author->author_id]);
 
-        return response()->json(Book::with(['authors', 'categories', 'publisher'])->find($book->book_id));
+            // Auto Import luôn tạo sẵn 1 bản sao với barcode tự sinh, cùng cách với "Thêm sách thủ công".
+            BookCopy::create([
+                'book_id' => $book->book_id,
+                'barcode' => BookCopy::generateUniqueBarcode(),
+                'status' => 'available',
+                'condition' => 'good',
+                'shelf_location' => null,
+                'acquisition_date' => now()->toDateString(),
+            ]);
+
+            return $book;
+        });
+
+        return response()->json(Book::with(['authors', 'categories', 'publisher', 'bookCopies'])->find($book->book_id));
     }
 
     public function index(Request $request)
@@ -147,6 +161,10 @@ class BookController extends Controller
                         $pubSub->where('name', 'like', "%{$q}%");
                     });
             });
+        }
+
+        if ($request->boolean('is_featured')) {
+            $query->where('is_featured', true);
         }
 
         return $query->paginate(20);
@@ -263,7 +281,7 @@ class BookController extends Controller
 
     public function show(int $id)
     {
-        return Book::with(['authors', 'categories', 'publisher', 'bookEditHistories.user'])->findOrFail($id);
+        return Book::with(['authors', 'categories', 'publisher', 'bookCopies', 'bookEditHistories.user'])->findOrFail($id);
     }
 
     public function edit(int $id)

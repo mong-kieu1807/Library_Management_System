@@ -295,7 +295,11 @@ class AuthController extends Controller
     private function logLoginAttempt($email, $userId, $status, $reason = null)
     {
         try {
-            \App\Models\LoginLog::create([
+            // [HOTFIX] TiDB: login_id không auto-increment — tự sinh ID (giống hotfix card_id ở trên)
+            $nextLoginId = (int) (DB::table('login_logs')->lockForUpdate()->max('login_id') ?? 0) + 1;
+
+            DB::table('login_logs')->insert([
+                'login_id' => $nextLoginId,
                 'user_id' => $userId,
                 'email_attempt' => $email,
                 'ip_address' => request()->ip(),
