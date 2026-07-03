@@ -684,4 +684,123 @@ class ReportService
 
         return $trend;
     }
+
+    /**
+     * Lấy báo cáo chi tiết ngày hôm nay (mượn, trả, đặt trước).
+     */
+    public function getTodayReport(): array
+    {
+        $todayStr = Carbon::today()->toDateString();
+
+        // 1. Lượt mượn hôm nay
+        $borrows = DB::table('borrow_transactions as bt')
+            ->join('users as u', 'u.user_id', '=', 'bt.user_id')
+            ->leftJoin('library_cards as lc', 'lc.user_id', '=', 'u.user_id')
+            ->whereDate('bt.borrow_date', $todayStr)
+            ->select([
+                'bt.borrow_id',
+                'bt.borrow_date',
+                'bt.due_date',
+                'u.full_name as reader_name',
+                'u.email as reader_email',
+                'lc.card_number',
+                'bt.status',
+                DB::raw('(
+                    SELECT GROUP_CONCAT(b.title SEPARATOR ", ")
+                    FROM borrow_details bd2
+                    JOIN book_copies bc2 ON bc2.copy_id = bd2.copy_id
+                    JOIN books b ON b.book_id = bc2.book_id
+                    WHERE bd2.borrow_id = bt.borrow_id
+                ) as books')
+            ])
+            ->orderByDesc('bt.borrow_id')
+            ->get()
+            ->map(function ($r) {
+                return [
+                    'borrow_id' => (int) $r->borrow_id,
+                    'borrow_date' => $r->borrow_date,
+                    'due_date' => $r->due_date,
+                    'reader_name' => $r->reader_name,
+                    'reader_email' => $r->reader_email,
+                    'card_number' => $r->card_number,
+                    'status' => $r->status,
+                    'books' => $r->books,
+                ];
+            })
+            ->toArray();
+
+        // 2. Lượt trả hôm nay
+        $returns = DB::table('borrow_details as bd')
+            ->join('borrow_transactions as bt', 'bt.borrow_id', '=', 'bd.borrow_id')
+            ->join('users as u', 'u.user_id', '=', 'bt.user_id')
+            ->join('book_copies as bc', 'bc.copy_id', '=', 'bd.copy_id')
+            ->join('books as b', 'b.book_id', '=', 'bc.book_id')
+            ->leftJoin('fines as f', function ($j) {
+                $j->on('f.borrow_id', '=', 'bd.borrow_id')->on('f.copy_id', '=', 'bd.copy_id');
+            })
+            ->whereDate('bd.return_date', $todayStr)
+            ->select([
+                'bd.borrow_id',
+                'b.title as book_title',
+                'bd.return_date',
+                'u.full_name as reader_name',
+                'u.email as reader_email',
+                DB::raw('COALESCE(f.amount, 0) as fine_amount')
+            ])
+            ->orderByDesc('bd.return_date')
+            ->get()
+            ->map(function ($r) {
+                return [
+                    'borrow_id' => (int) $r->borrow_id,
+                    'book_title' => $r->book_title,
+                    'return_date' => $r->return_date,
+                    'reader_name' => $r->reader_name,
+                    'reader_email' => $r->reader_email,
+                    'fine_amount' => (int) $r->fine_amount,
+                ];
+            })
+            ->toArray();
+
+        // 3. Lượt đặt trước hôm nay
+        $reservations = DB::table('reservations as r')
+            ->join('users as u', 'u.user_id', '=', 'r.user_id')
+            ->join('books as b', 'b.book_id', '=', 'r.book_id')
+            ->whereDate('r.created_at', $todayStr)
+            ->select([
+                'r.reservation_id',
+                'r.created_at',
+                'u.full_name as reader_name',
+                'u.email as reader_email',
+                'b.title as book_title',
+                'r.queue_position',
+                'r.status'
+            ])
+            ->orderByDesc('r.reservation_id')
+            ->get()
+            ->map(function ($r) {
+                return [
+                    'reservation_id' => (int) $r->reservation_id,
+                    'created_at' => $r->created_at,
+                    'reader_name' => $r->reader_name,
+                    'reader_email' => $r->reader_email,
+                    'book_title' => $r->book_title,
+                    'queue_position' => (int) $r->queue_position,
+                    'status' => $r->status,
+                ];
+            })
+            ->toArray();
+
+        return [
+            'summary' => [
+                'total_borrows' => count($borrows),
+                'total_returns' => count($returns),
+                'total_reservations' => count($reservations),
+            ],
+            'details' => [
+                'borrows' => $borrows,
+                'returns' => $returns,
+                'reservations' => $reservations,
+            ],
+        ];
+    }
 }

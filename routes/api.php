@@ -74,6 +74,8 @@ Route::get('private/v1/reports/export/transactions-csv',   [ExportController::cl
 Route::get('private/v1/reports/export/top-books-csv',      [ExportController::class, 'topBooksCsv']);
 Route::get('private/v1/reports/export/top-authors-csv',    [ExportController::class, 'topAuthorsCsv']);
 Route::get('private/v1/reports/export/top-categories-csv', [ExportController::class, 'topCategoriesCsv']);
+Route::get('private/v1/reports/export/today-pdf',            [ExportController::class, 'todayReportPdf']);
+Route::get('private/v1/reports/export/today-csv',            [ExportController::class, 'todayReportCsv']);
 
 Route::middleware(['auth:sanctum', 'role:admin,librarian'])->group(function () {
     Route::post('v1/books', [AdminBookController::class, 'store']);
@@ -247,6 +249,7 @@ Route::middleware(['auth:sanctum', 'role:admin,librarian'])->prefix('private/v1/
     Route::get('/top-categories',        [ReportController::class, 'topCategories']);          // Phase 2 (categories)
     Route::get('/fine-revenue',          [ReportController::class, 'fineRevenue']);            // Phase 4 (fine)
     Route::get('/fine-reasons',          [ReportController::class, 'fineReasons']);            // Phase 4 (fine)
+    Route::get('/today',                 [ReportController::class, 'todayReport']);
 });
 
 // Library Card Renewal — Admin (M1.6)

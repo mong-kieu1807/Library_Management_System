@@ -191,7 +191,11 @@ class DashboardController extends Controller
                 ->distinct()->count('bt.user_id'),
             DB::table('fines')->where('status', 'unpaid')->sum('amount'),
             DB::table('reservations')->whereIn('status', ['waiting', 'ready'])->count(),
-            DB::table('borrow_transactions')->whereDate('borrow_date', today())->count(),
+            (
+                DB::table('borrow_transactions')->whereDate('borrow_date', today())->count()
+                + DB::table('borrow_details')->whereDate('return_date', today())->count()
+                + DB::table('payments')->whereDate('payment_date', today())->count()
+            ),
             DB::table('book_copies')->count(),
         ];
 
