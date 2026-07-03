@@ -2,20 +2,76 @@
 
 namespace App\Http\Controllers\Admin;
 
+use App\Exceptions\AuthorNotFoundException;
 use App\Http\Controllers\Controller;
 use App\Models\Author;
 use App\Models\Book;
+use App\Models\BookCopy;
 use App\Models\BookEditHistory;
 use App\Models\Publisher;
+use App\Services\GoogleBooksService;
 use Intervention\Image\Laravel\Facades\Image;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 
 
 class BookController extends Controller
 {
+    public function __construct(private GoogleBooksService $googleBooksService)
+    {
+    }
+
+    /**
+     * Resolve manually-typed author names to author_id's, auto-creating any author that
+     * doesn't exist yet in the system provided Google Books confirms they're a real author
+     * (its book-cover thumbnail is stored as a stand-in avatar). Throws when a name matches
+     * neither the local system nor Google Books, so the caller can reject the request.
+     *
+     * @param string[] $names
+     * @return int[]
+     * @throws AuthorNotFoundException
+     */
+    private function resolveAuthorIds(array $names): array
+    {
+        $ids = [];
+
+        foreach ($names as $rawName) {
+            $name = trim((string) $rawName);
+            if ($name === '') {
+                continue;
+            }
+
+            $existing = Author::whereRaw('LOWER(author_name) = ?', [mb_strtolower($name)])->first();
+            if ($existing) {
+                $ids[] = $existing->author_id;
+                continue;
+            }
+
+            $info = $this->googleBooksService->findAuthorInfo($name);
+            if ($info === null) {
+                throw new AuthorNotFoundException(
+                    "Không tìm thấy tác giả \"{$name}\" trên Google Books. Vui lòng kiểm tra lại tên hoặc chọn tác giả có sẵn trong hệ thống."
+                );
+            }
+
+            $newAuthor = Author::firstOrCreate(
+                ['author_name' => $name],
+                ['avatar_url' => $info['photo_url'] ?? null, 'is_active' => true]
+            );
+            $ids[] = $newAuthor->author_id;
+        }
+
+        if (empty($ids)) {
+            throw new AuthorNotFoundException('Vui lòng cung cấp ít nhất một tác giả hợp lệ.');
+        }
+
+        return array_values(array_unique($ids));
+    }
+
     public function fetchByISBN(string $isbn)
     {
         $book = Book::where('isbn', $isbn)->with(['authors', 'categories', 'publisher'])->first();
@@ -108,7 +164,7 @@ class BookController extends Controller
             'isbn' => ['required', 'string', 'max:20', 'unique:books,isbn'],
             'publisher_id' => ['required', 'exists:publishers,publisher_id'],
             'authors' => ['required', 'array', 'min:1'],
-            'authors.*' => ['integer', 'exists:authors,author_id'],
+            'authors.*' => ['string', 'max:255'],
             'publish_date' => ['nullable', 'date'],
             'publish_year' => ['nullable', 'integer'],
             'edition' => ['nullable', 'string', 'max:50'],
@@ -117,53 +173,92 @@ class BookController extends Controller
             'dimensions' => ['nullable', 'string', 'max:100'],
             'cover_type' => ['nullable', 'string', 'max:50'],
             'description' => ['nullable', 'string'],
-            'cover_image' => ['nullable', 'image', 'max:2048'],
+            'cover_image' => ['nullable', 'image', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
             'replacement_cost' => ['nullable', 'numeric', 'min:0'],
             'is_featured' => ['boolean'],
             'categories' => ['nullable', 'array'],
             'categories.*' => ['integer', 'exists:categories,category_id'],
+            'create_first_copy' => ['sometimes', 'boolean'],
+            'barcode' => ['nullable', 'string', 'max:64', 'unique:book_copies,barcode'],
+            'shelf_location' => ['nullable', 'string', 'max:100'],
         ]);
-        if ($request->hasFile('cover_image')) {
 
+        // Authors are submitted as names (existing or brand new) — resolve to IDs before
+        // touching the disk/DB so an unrecognized author name fails fast.
+        try {
+            $authorIds = $this->resolveAuthorIds($validated['authors']);
+        } catch (AuthorNotFoundException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        $createFirstCopy = $request->boolean('create_first_copy', true);
+
+        $coverImagePath = null;
+        if ($request->hasFile('cover_image')) {
             $image = Image::read($request->file('cover_image'));
 
             // crop và resize về kích thước cố định
             $image->cover(300, 450);
 
-            $filename = time().'.jpg';
+            $filename = time().'_'.Str::random(8).'.jpg';
 
             $image->save(
                 storage_path('app/public/book-covers/'.$filename)
             );
 
-            $validated['cover_image'] = 'book-covers/'.$filename;
+            $coverImagePath = 'book-covers/'.$filename;
         }
-        $book = DB::transaction(function () use ($validated) {
-            $book = Book::create([
-            'title' => $validated['title'],
-            'isbn' => $validated['isbn'],
-            'publisher_id' => $validated['publisher_id'],
-            'author_id' => (int)$validated['authors'][0],
 
-            'publish_date' => $validated['publish_date'] ?? null,
-            'publish_year' => $validated['publish_year'] ?? null,
-            'edition' => $validated['edition'] ?? null,
-            'language' => $validated['language'] ?? null,
-            'pages' => $validated['pages'] ?? null,
-            'dimensions' => $validated['dimensions'] ?? null,
-            'cover_type' => $validated['cover_type'] ?? null,
-            'description' => $validated['description'] ?? null,
-            'replacement_cost' => $validated['replacement_cost'] ?? null,
-            'cover_image' => $validated['cover_image'] ?? null,
-        ]);
+        try {
+            $book = DB::transaction(function () use ($validated, $coverImagePath, $createFirstCopy, $authorIds) {
+                $book = Book::create([
+                'title' => $validated['title'],
+                'isbn' => $validated['isbn'],
+                'publisher_id' => $validated['publisher_id'],
+                'author_id' => $authorIds[0],
 
-            $book->authors()->sync($validated['authors'] ?? []);
-            $book->categories()->sync($validated['categories'] ?? []);
+                'publish_date' => $validated['publish_date'] ?? null,
+                'publish_year' => $validated['publish_year'] ?? null,
+                'edition' => $validated['edition'] ?? null,
+                'language' => $validated['language'] ?? null,
+                'pages' => $validated['pages'] ?? null,
+                'dimensions' => $validated['dimensions'] ?? null,
+                'cover_type' => $validated['cover_type'] ?? null,
+                'description' => $validated['description'] ?? null,
+                'replacement_cost' => $validated['replacement_cost'] ?? null,
+                'cover_image' => $coverImagePath,
+            ]);
 
-            return $book;
-        });
+                $book->authors()->sync($authorIds);
+                $book->categories()->sync($validated['categories'] ?? []);
 
-        return response()->json($book->load(['authors', 'categories', 'publisher']), 201);
+                if ($createFirstCopy) {
+                    $barcode = $validated['barcode'] ?? null;
+                    if (!$barcode) {
+                        $barcode = BookCopy::generateUniqueBarcode();
+                    }
+
+                    BookCopy::create([
+                        'book_id' => $book->book_id,
+                        'barcode' => $barcode,
+                        'status' => 'available',
+                        'condition' => 'good',
+                        'shelf_location' => $validated['shelf_location'] ?? null,
+                        'acquisition_date' => now()->toDateString(),
+                    ]);
+                }
+
+                return $book;
+            });
+        } catch (\Throwable $e) {
+            // Roll back the on-disk upload too — the DB transaction already rolled back the rows.
+            if ($coverImagePath) {
+                Storage::disk('public')->delete($coverImagePath);
+            }
+            throw $e;
+        }
+
+        return response()->json($book->load(['authors', 'categories', 'publisher', 'bookCopies']), 201);
     }
 
     public function show(int $id)
@@ -198,13 +293,12 @@ class BookController extends Controller
             'dimensions' => ['sometimes', 'nullable', 'string', 'max:100'],
             'cover_type' => ['sometimes', 'nullable', 'string', 'max:50'],
             'description' => ['sometimes', 'nullable', 'string'],
-            'cover_image' => ['sometimes', 'nullable', 'string', 'max:255'],
             'avg_rating' => ['sometimes', 'nullable', 'numeric', 'between:0,9.9'],
             'total_reviews' => ['sometimes', 'nullable', 'integer', 'min:0'],
             'replacement_cost' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'is_featured' => ['sometimes', 'boolean'],
             'authors' => ['sometimes', 'array'],
-            'authors.*' => ['integer', 'exists:authors,author_id'],
+            'authors.*' => ['string', 'max:255'],
             'categories' => ['sometimes', 'array'],
             'categories.*' => ['integer', 'exists:categories,category_id'],
             'edited_by' => ['nullable', 'exists:users,user_id'],
@@ -216,6 +310,49 @@ class BookController extends Controller
             return response()->json([
                 'message' => 'Vui long cung cap nguoi chinh sua (edited_by) hoac dang nhap truoc khi sua sach.',
             ], 422);
+        }
+
+        // Authors are submitted as names — resolve to IDs, auto-creating unknown-but-real
+        // (per Google Books) authors, same as store().
+        $resolvedAuthorIds = null;
+        if ($request->exists('authors')) {
+            try {
+                $resolvedAuthorIds = $this->resolveAuthorIds($validated['authors'] ?? []);
+            } catch (AuthorNotFoundException $e) {
+                return response()->json(['message' => $e->getMessage()], 422);
+            }
+        }
+
+        // Cover image: new file upload, explicit removal, or (back-compat) a raw string/URL passthrough.
+        $coverImageProvided = false;
+        $newCoverImagePath = null;
+        $uploadedCoverImagePath = null;
+        $oldCoverImagePathForCleanup = null;
+
+        if ($request->hasFile('cover_image')) {
+            $request->validate([
+                'cover_image' => ['image', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
+            ]);
+
+            $image = Image::read($request->file('cover_image'));
+            $image->cover(300, 450);
+            $filename = time().'_'.Str::random(8).'.jpg';
+            $image->save(storage_path('app/public/book-covers/'.$filename));
+
+            $newCoverImagePath = 'book-covers/'.$filename;
+            $uploadedCoverImagePath = $newCoverImagePath;
+            $coverImageProvided = true;
+            $oldCoverImagePathForCleanup = $book->cover_image;
+        } elseif ($request->boolean('remove_cover_image')) {
+            $newCoverImagePath = null;
+            $coverImageProvided = true;
+            $oldCoverImagePathForCleanup = $book->cover_image;
+        } elseif ($request->exists('cover_image')) {
+            $request->validate([
+                'cover_image' => ['nullable', 'string', 'max:255'],
+            ]);
+            $newCoverImagePath = $request->input('cover_image');
+            $coverImageProvided = true;
         }
 
         $editableFields = [
@@ -246,12 +383,20 @@ class BookController extends Controller
         $categoryMap  = DB::table('categories')->pluck('category_name', 'category_id');
 
         foreach ($editableFields as $field) {
-            if (!$request->exists($field)) {
-                continue;
-            }
+            if ($field === 'cover_image') {
+                if (!$coverImageProvided) {
+                    continue;
+                }
+                $oldValue = $book->getAttribute('cover_image');
+                $newValue = $newCoverImagePath;
+            } else {
+                if (!$request->exists($field)) {
+                    continue;
+                }
 
-            $oldValue = $book->getAttribute($field);
-            $newValue = $validated[$field] ?? null;
+                $oldValue = $book->getAttribute($field);
+                $newValue = $validated[$field] ?? null;
+            }
 
             if ($this->formatHistoryValue($oldValue) === $this->formatHistoryValue($newValue)) {
                 continue;
@@ -267,7 +412,7 @@ class BookController extends Controller
 
         if ($request->exists('authors')) {
             $oldAuthors = $book->authors->pluck('author_id')->sort()->values()->all();
-            $newAuthors = collect($validated['authors'] ?? [])->map(fn ($id) => (int) $id)->unique()->sort()->values()->all();
+            $newAuthors = collect($resolvedAuthorIds ?? [])->unique()->sort()->values()->all();
 
             if ($oldAuthors !== $newAuthors) {
                 $oldAuthorNames = $book->authors->pluck('author_name')->sort()->values()->all();
@@ -275,8 +420,8 @@ class BookController extends Controller
                 $changes[] = $this->makeHistoryRow($book->book_id, $editedBy, 'authors', $oldAuthorNames, $newAuthorNames, $request->input('edit_reason'));
             }
 
-            if (!empty($validated['authors'])) {
-                $primaryAuthorId = (int)$validated['authors'][0];
+            if (!empty($resolvedAuthorIds)) {
+                $primaryAuthorId = (int) $resolvedAuthorIds[0];
                 if ($book->author_id !== $primaryAuthorId) {
                     $updateData['author_id'] = $primaryAuthorId;
                     $oldAuthorName = $authorMap[$book->author_id] ?? "ID:{$book->author_id}";
@@ -297,23 +442,38 @@ class BookController extends Controller
             }
         }
 
-        DB::transaction(function () use ($book, $updateData, $request, $validated, $changes) {
-            if (!empty($updateData)) {
-                $book->update($updateData);
-            }
+        try {
+            DB::transaction(function () use ($book, $updateData, $request, $validated, $changes, $resolvedAuthorIds) {
+                if (!empty($updateData)) {
+                    $book->update($updateData);
+                }
 
-            if ($request->exists('authors')) {
-                $book->authors()->sync($validated['authors'] ?? []);
-            }
+                if ($request->exists('authors')) {
+                    $book->authors()->sync($resolvedAuthorIds ?? []);
+                }
 
-            if ($request->exists('categories')) {
-                $book->categories()->sync($validated['categories'] ?? []);
-            }
+                if ($request->exists('categories')) {
+                    $book->categories()->sync($validated['categories'] ?? []);
+                }
 
-            foreach ($changes as $change) {
-                BookEditHistory::create($change);
+                foreach ($changes as $change) {
+                    BookEditHistory::create($change);
+                }
+            });
+        } catch (\Throwable $e) {
+            // Roll back the newly uploaded file — the DB transaction already rolled back the rows,
+            // and the old cover (if any) was never touched.
+            if ($uploadedCoverImagePath) {
+                Storage::disk('public')->delete($uploadedCoverImagePath);
             }
-        });
+            throw $e;
+        }
+
+        // Only clean up the previous cover after a successful commit, and only if it was a
+        // locally-stored file — imported covers can point at external URLs we don't own.
+        if ($oldCoverImagePathForCleanup && !str_starts_with($oldCoverImagePathForCleanup, 'http')) {
+            Storage::disk('public')->delete($oldCoverImagePathForCleanup);
+        }
 
         return response()->json(
             Book::with(['authors', 'categories', 'publisher', 'bookEditHistories.user'])->findOrFail($id),

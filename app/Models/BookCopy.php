@@ -37,4 +37,19 @@ class BookCopy extends Model
     'created_at',
     'updated_at'
     ];
+
+    /**
+     * Generate a barcode not already present in book_copies, retrying on collision.
+     */
+    public static function generateUniqueBarcode(): string
+    {
+        for ($attempt = 0; $attempt < 10; $attempt++) {
+            $candidate = 'BC' . now()->format('ymdHis') . random_int(100, 999);
+            if (!self::where('barcode', $candidate)->exists()) {
+                return $candidate;
+            }
+        }
+
+        throw new \RuntimeException('Không thể sinh barcode duy nhất, vui lòng thử lại.');
+    }
 }

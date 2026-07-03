@@ -24,6 +24,7 @@ class Author extends Model
     'bio',
     'birth_date',
     'nationality',
+    'avatar_url',
     'is_active'
     ];
 }

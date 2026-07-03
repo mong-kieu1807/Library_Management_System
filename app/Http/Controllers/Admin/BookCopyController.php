@@ -65,8 +65,14 @@ class BookCopyController extends Controller
     }
  
     /**
-     * Store a newly created resource in storage.
+     * Generate a unique barcode candidate for the "Sinh barcode" button (preview only —
+     * uniqueness is re-checked at insert time since this value isn't reserved yet).
      */
+    public function generateBarcode()
+    {
+        return response()->json(['barcode' => BookCopy::generateUniqueBarcode()]);
+    }
+
     /**
      * Store a newly created resource in storage.
      */

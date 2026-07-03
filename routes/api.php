@@ -100,6 +100,7 @@ Route::middleware(['auth:sanctum', 'role:admin,librarian'])->group(function () {
 
     // Book copies management
     Route::get('v1/book-copies', [App\Http\Controllers\Admin\BookCopyController::class, 'index']);
+    Route::get('v1/book-copies/generate-barcode', [App\Http\Controllers\Admin\BookCopyController::class, 'generateBarcode']);
     Route::post('v1/book-copies', [App\Http\Controllers\Admin\BookCopyController::class, 'store']);
     Route::put('v1/book-copies/{id}', [App\Http\Controllers\Admin\BookCopyController::class, 'update']);
     Route::delete('v1/book-copies/{id}', [App\Http\Controllers\Admin\BookCopyController::class, 'destroy']);
