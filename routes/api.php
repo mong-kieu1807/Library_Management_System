@@ -23,6 +23,7 @@ use App\Http\Controllers\Admin\HistoryController;
 use App\Http\Controllers\AIController;
 use App\Http\Controllers\Admin\ReportController;
 use App\Http\Controllers\Admin\ExportController;
+use App\Http\Controllers\Admin\AIBookDemandController;
 
 
 Route::prefix('v1/auth')->group(function () {
@@ -192,6 +193,14 @@ Route::middleware(['auth:sanctum', 'role:admin,librarian'])->prefix('private/v1'
         Route::post('/cancel',      [AdminReservationController::class, 'cancelReservation']);
         Route::post('/expire',      [AdminReservationController::class, 'expireReservations']);
     });
+});
+
+// Module 3 — AI Phân tích nhu cầu sách
+Route::middleware(['auth:sanctum', 'role:admin,librarian'])->prefix('private/v1/ai')->group(function () {
+    Route::get('/import-suggestions', [AIBookDemandController::class, 'importSuggestions']);
+    Route::get('/low-borrow-books',   [AIBookDemandController::class, 'lowBorrowBooks']);
+    Route::get('/seasonal-demand',    [AIBookDemandController::class, 'seasonalDemand']);
+    Route::post('/cache/clear',       [AIBookDemandController::class, 'clearCache']);
 });
 
 // Module 6 — Báo cáo & Thống kê
