@@ -18,6 +18,10 @@ return array(
     'App\\Events\\ReservationReady' => $baseDir . '/app/Events/ReservationReady.php',
     'App\\Helpers\\Google2FA' => $baseDir . '/app/Helpers/Google2FA.php',
     'App\\Http\\Controllers\\AIController' => $baseDir . '/app/Http/Controllers/AIController.php',
+<<<<<<< HEAD
+=======
+    'App\\Http\\Controllers\\Admin\\AIBookDemandController' => $baseDir . '/app/Http/Controllers/Admin/AIBookDemandController.php',
+>>>>>>> d26087b800d5250709256420665559dfd85f3437
     'App\\Http\\Controllers\\Admin\\AIChatController' => $baseDir . '/app/Http/Controllers/Admin/AIChatController.php',
     'App\\Http\\Controllers\\Admin\\AIRecommendationController' => $baseDir . '/app/Http/Controllers/Admin/AIRecommendationController.php',
     'App\\Http\\Controllers\\Admin\\AuditLogController' => $baseDir . '/app/Http/Controllers/Admin/AuditLogController.php',
@@ -109,12 +113,14 @@ return array(
     'App\\Models\\ReportExport' => $baseDir . '/app/Models/ReportExport.php',
     'App\\Models\\Reservation' => $baseDir . '/app/Models/Reservation.php',
     'App\\Models\\Role' => $baseDir . '/app/Models/Role.php',
+    'App\\Models\\SearchLog' => $baseDir . '/app/Models/SearchLog.php',
     'App\\Models\\SystemSetting' => $baseDir . '/app/Models/SystemSetting.php',
     'App\\Models\\User' => $baseDir . '/app/Models/User.php',
     'App\\Models\\UserRole' => $baseDir . '/app/Models/UserRole.php',
     'App\\Providers\\AppServiceProvider' => $baseDir . '/app/Providers/AppServiceProvider.php',
     'App\\Rules\\StrongPassword' => $baseDir . '/app/Rules/StrongPassword.php',
     'App\\Services\\AIAnalysisService' => $baseDir . '/app/Services/AIAnalysisService.php',
+    'App\\Services\\AIBookDemandService' => $baseDir . '/app/Services/AIBookDemandService.php',
     'App\\Services\\BackupService' => $baseDir . '/app/Services/BackupService.php',
     'App\\Services\\BookService' => $baseDir . '/app/Services/BookService.php',
     'App\\Services\\BorrowService' => $baseDir . '/app/Services/BorrowService.php',
@@ -254,6 +260,7 @@ return array(
     'Cron\\MonthField' => $vendorDir . '/dragonmantank/cron-expression/src/Cron/MonthField.php',
     'Database\\Factories\\UserFactory' => $baseDir . '/database/factories/UserFactory.php',
     'Database\\Seeders\\DatabaseSeeder' => $baseDir . '/database/seeders/DatabaseSeeder.php',
+    'Database\\Seeders\\SearchLogSeeder' => $baseDir . '/database/seeders/SearchLogSeeder.php',
     'DateError' => $vendorDir . '/symfony/polyfill-php83/Resources/stubs/DateError.php',
     'DateException' => $vendorDir . '/symfony/polyfill-php83/Resources/stubs/DateException.php',
     'DateInvalidOperationException' => $vendorDir . '/symfony/polyfill-php83/Resources/stubs/DateInvalidOperationException.php',

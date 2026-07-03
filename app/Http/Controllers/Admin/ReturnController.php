@@ -188,8 +188,7 @@ class ReturnController extends Controller
                 $fineUpdates  = [];  // [fine_id => new_amount]
 
                 foreach ($details as $detail) {
-                    $due         = Carbon::parse($detail->due_date)->startOfDay();
-                    $overdueDays = $today->gt($due) ? (int) $today->diffInDays($due, true) : 0;
+                    $overdueDays = $this->calculateOverdueDays($detail->due_date, $today);
                     if ($overdueDays === 0) continue;
 
                     $fineAmt       = $overdueDays * $finePerDay;
@@ -215,6 +214,14 @@ class ReturnController extends Controller
 
                 // Bulk INSERT (1 query) + UPDATE nếu cần
                 if (!empty($fineInserts)) {
+                    // TiDB: fine_id không có AUTO_INCREMENT -> tự sinh id tuần tự trước khi
+                    // insert (cùng pattern đã dùng ở HolidayController/ActivityLogService).
+                    $nextFineId = (int) (DB::table('fines')->lockForUpdate()->max('fine_id') ?? 0) + 1;
+                    foreach ($fineInserts as &$fineRow) {
+                        $fineRow['fine_id'] = $nextFineId++;
+                    }
+                    unset($fineRow);
+
                     DB::table('fines')->insert($fineInserts);
                 }
                 foreach ($fineUpdates as $fineId => $newAmount) {
@@ -386,8 +393,7 @@ class ReturnController extends Controller
             ->value('config_value');
 
         $today       = Carbon::today();
-        $due         = Carbon::parse($row->due_date)->startOfDay();
-        $overdueDays = $today->gt($due) ? (int) $today->diffInDays($due, true) : 0;
+        $overdueDays = $this->calculateOverdueDays($row->due_date, $today);
 
         return response()->json([
             'code'    => 200,
@@ -470,9 +476,7 @@ class ReturnController extends Controller
         $today = Carbon::today();
 
         $results = $rows->map(function ($row) use ($finePerDay, $maxRenewTimes, $reservedBookIds, $today) {
-            $due         = Carbon::parse($row->due_date)->startOfDay();
-            // Carbon 3.x: diffInDays() mặc định signed — phải truyền absolute=true
-            $overdueDays = $today->gt($due) ? (int) $today->diffInDays($due, true) : 0;
+            $overdueDays = $this->calculateOverdueDays($row->due_date, $today);
             $renewCount  = (int) $row->renew_count;
 
             return [
@@ -496,5 +500,22 @@ class ReturnController extends Controller
                 'meta'    => ['max_renew_times' => $maxRenewTimes],
             ],
         ]);
+    }
+
+    private function calculateOverdueDays(string $dueDateStr, \Carbon\Carbon $today): int
+    {
+        $due = \Carbon\Carbon::parse($dueDateStr)->startOfDay();
+        $overdueDays = $today->gt($due) ? (int) $today->diffInDays($due, true) : 0;
+
+        if ($overdueDays > 0) {
+            $holidayCount = DB::table('holidays')
+                ->where('holiday_date', '>', $due->toDateString())
+                ->where('holiday_date', '<=', $today->toDateString())
+                ->count();
+
+            $overdueDays = max(0, $overdueDays - $holidayCount);
+        }
+
+        return $overdueDays;
     }
 }

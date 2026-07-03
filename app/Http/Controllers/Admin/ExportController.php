@@ -270,6 +270,125 @@ class ExportController extends Controller
     }
 
     /**
+     * GET /api/private/v1/reports/export/fine-report-csv
+     *
+     * Xuất CSV báo cáo doanh thu tiền phạt.
+     * Route nằm NGOÀI auth middleware — window.open() không thể gửi Authorization header.
+     *
+     * Params (optional — giống ReportController::fineRevenue):
+     *   from_date  YYYY-MM-DD  default: đầu tháng 11 tháng trước
+     *   to_date    YYYY-MM-DD  default: hôm nay
+     */
+    public function fineReportCsv(Request $request): \Symfony\Component\HttpFoundation\StreamedResponse
+    {
+        try {
+            $from = $request->filled('from_date')
+                ? Carbon::parse($request->input('from_date'))->startOfDay()
+                : Carbon::now()->subMonths(11)->startOfMonth();
+
+            $to = $request->filled('to_date')
+                ? Carbon::parse($request->input('to_date'))->endOfDay()
+                : Carbon::today()->endOfDay();
+        } catch (\Exception) {
+            abort(422, 'Định dạng ngày không hợp lệ (YYYY-MM-DD).');
+        }
+
+        if ($from->gt($to)) {
+            abort(422, 'from_date phải nhỏ hơn hoặc bằng to_date.');
+        }
+
+        if ($from->diffInMonths($to, true) > 36) {
+            abort(422, 'Khoảng thời gian tối đa là 36 tháng.');
+        }
+
+        $revenue = $this->reportService->getFineRevenue(
+            $from->toDateString(),
+            $to->toDateString()
+        );
+        $reasons = $this->reportService->getFineReasons();
+
+        $totalRevenue   = array_sum(array_column($revenue, 'revenue'));
+        $totalFineCount = array_sum(array_column($revenue, 'fine_count'));
+
+        $filename = 'bao-cao-doanh-thu-tien-phat-' . now()->format('Ymd') . '.csv';
+
+        $headers = [
+            'Content-Type'        => 'text/csv; charset=UTF-8',
+            'Content-Disposition' => 'attachment; filename="' . $filename . '"',
+            'Pragma'              => 'no-cache',
+            'Cache-Control'       => 'must-revalidate, post-check=0, pre-check=0',
+            'Expires'             => '0',
+        ];
+
+        // Lấy thông tin thư viện từ system_settings
+        $settings = DB::table('system_settings')
+            ->whereIn('config_key', ['library_name', 'address', 'contact_phone'])
+            ->pluck('config_value', 'config_key');
+
+        $libraryName = $settings['library_name'] ?? 'Thư Viện';
+        $address     = $settings['address'] ?? '';
+        $phone       = $settings['contact_phone'] ?? '';
+
+        $callback = function () use ($revenue, $reasons, $totalRevenue, $totalFineCount, $from, $to, $libraryName, $address, $phone) {
+            $file = fopen('php://output', 'w');
+
+            // Add UTF-8 BOM for Excel compatibility
+            fprintf($file, chr(0xEF) . chr(0xBB) . chr(0xBF));
+
+            // Đơn vị phát hành báo cáo
+            fputcsv($file, [$libraryName]);
+            if (!empty($address)) fputcsv($file, ['Địa chỉ:', $address]);
+            if (!empty($phone))   fputcsv($file, ['Điện thoại:', $phone]);
+            fputcsv($file, []);
+
+            // Tiêu đề báo cáo
+            fputcsv($file, ['============================================================']);
+            fputcsv($file, ['             BÁO CÁO DOANH THU TIỀN PHẠT TRỄ HẠN / HỎNG MẤT SÁCH']);
+            fputcsv($file, ['============================================================']);
+            fputcsv($file, ['Khoảng thời gian:', $from->format('d/m/Y') . ' - ' . $to->format('d/m/Y')]);
+            fputcsv($file, ['Ngày xuất bản:', now()->format('d/m/Y H:i')]);
+            fputcsv($file, []);
+
+            // Phần I: Doanh thu theo thời gian
+            fputcsv($file, ['I. DOANH THU THEO TIẾN ĐỘ THỜI GIAN']);
+            fputcsv($file, ['Chu kỳ (Tháng/Ngày)', 'Số lượt xử phạt', 'Tổng doanh thu thực tế']);
+            fputcsv($file, ['---------------------------', '----------------', '-------------------------']);
+            foreach ($revenue as $row) {
+                fputcsv($file, [
+                    $row['label'], 
+                    $row['fine_count'] . ' lượt', 
+                    number_format($row['revenue'], 0, ',', '.') . ' ₫'
+                ]);
+            }
+            fputcsv($file, ['---------------------------', '----------------', '-------------------------']);
+            fputcsv($file, [
+                'TỔNG CỘNG', 
+                $totalFineCount . ' lượt', 
+                number_format($totalRevenue, 0, ',', '.') . ' ₫'
+            ]);
+            fputcsv($file, []);
+            fputcsv($file, []);
+
+            // Phần II: Phân loại theo nguyên nhân
+            fputcsv($file, ['II. PHÂN LOẠI DOANH THU THEO NGUYÊN NHÂN PHẠT (TOÀN THỜI GIAN)']);
+            fputcsv($file, ['Phân nhóm nguyên nhân', 'Số lượt xử phạt', 'Tổng số tiền phạt thu được']);
+            fputcsv($file, ['---------------------------', '----------------', '-------------------------']);
+            foreach ($reasons as $row) {
+                fputcsv($file, [
+                    $row['category'], 
+                    $row['fine_count'] . ' lượt', 
+                    number_format($row['total_amount'], 0, ',', '.') . ' ₫'
+                ]);
+            }
+            fputcsv($file, ['---------------------------', '----------------', '-------------------------']);
+
+            fclose($file);
+        };
+
+        return response()->stream($callback, 200, $headers);
+    }
+
+    /**
      * GET /api/private/v1/reports/export/transactions-csv
      *
      * Xuất CSV báo cáo giao dịch mượn/trả — có thể mở trực tiếp trong Excel.

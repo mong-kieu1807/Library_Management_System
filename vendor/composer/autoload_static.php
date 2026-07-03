@@ -712,6 +712,10 @@ class ComposerStaticInit53b5d56b3b7e3cbac1713e68c8850f6c
         'App\\Events\\ReservationReady' => __DIR__ . '/../..' . '/app/Events/ReservationReady.php',
         'App\\Helpers\\Google2FA' => __DIR__ . '/../..' . '/app/Helpers/Google2FA.php',
         'App\\Http\\Controllers\\AIController' => __DIR__ . '/../..' . '/app/Http/Controllers/AIController.php',
+<<<<<<< HEAD
+=======
+        'App\\Http\\Controllers\\Admin\\AIBookDemandController' => __DIR__ . '/../..' . '/app/Http/Controllers/Admin/AIBookDemandController.php',
+>>>>>>> d26087b800d5250709256420665559dfd85f3437
         'App\\Http\\Controllers\\Admin\\AIChatController' => __DIR__ . '/../..' . '/app/Http/Controllers/Admin/AIChatController.php',
         'App\\Http\\Controllers\\Admin\\AIRecommendationController' => __DIR__ . '/../..' . '/app/Http/Controllers/Admin/AIRecommendationController.php',
         'App\\Http\\Controllers\\Admin\\AuditLogController' => __DIR__ . '/../..' . '/app/Http/Controllers/Admin/AuditLogController.php',
@@ -803,12 +807,14 @@ class ComposerStaticInit53b5d56b3b7e3cbac1713e68c8850f6c
         'App\\Models\\ReportExport' => __DIR__ . '/../..' . '/app/Models/ReportExport.php',
         'App\\Models\\Reservation' => __DIR__ . '/../..' . '/app/Models/Reservation.php',
         'App\\Models\\Role' => __DIR__ . '/../..' . '/app/Models/Role.php',
+        'App\\Models\\SearchLog' => __DIR__ . '/../..' . '/app/Models/SearchLog.php',
         'App\\Models\\SystemSetting' => __DIR__ . '/../..' . '/app/Models/SystemSetting.php',
         'App\\Models\\User' => __DIR__ . '/../..' . '/app/Models/User.php',
         'App\\Models\\UserRole' => __DIR__ . '/../..' . '/app/Models/UserRole.php',
         'App\\Providers\\AppServiceProvider' => __DIR__ . '/../..' . '/app/Providers/AppServiceProvider.php',
         'App\\Rules\\StrongPassword' => __DIR__ . '/../..' . '/app/Rules/StrongPassword.php',
         'App\\Services\\AIAnalysisService' => __DIR__ . '/../..' . '/app/Services/AIAnalysisService.php',
+        'App\\Services\\AIBookDemandService' => __DIR__ . '/../..' . '/app/Services/AIBookDemandService.php',
         'App\\Services\\BackupService' => __DIR__ . '/../..' . '/app/Services/BackupService.php',
         'App\\Services\\BookService' => __DIR__ . '/../..' . '/app/Services/BookService.php',
         'App\\Services\\BorrowService' => __DIR__ . '/../..' . '/app/Services/BorrowService.php',
@@ -948,6 +954,7 @@ class ComposerStaticInit53b5d56b3b7e3cbac1713e68c8850f6c
         'Cron\\MonthField' => __DIR__ . '/..' . '/dragonmantank/cron-expression/src/Cron/MonthField.php',
         'Database\\Factories\\UserFactory' => __DIR__ . '/../..' . '/database/factories/UserFactory.php',
         'Database\\Seeders\\DatabaseSeeder' => __DIR__ . '/../..' . '/database/seeders/DatabaseSeeder.php',
+        'Database\\Seeders\\SearchLogSeeder' => __DIR__ . '/../..' . '/database/seeders/SearchLogSeeder.php',
         'DateError' => __DIR__ . '/..' . '/symfony/polyfill-php83/Resources/stubs/DateError.php',
         'DateException' => __DIR__ . '/..' . '/symfony/polyfill-php83/Resources/stubs/DateException.php',
         'DateInvalidOperationException' => __DIR__ . '/..' . '/symfony/polyfill-php83/Resources/stubs/DateInvalidOperationException.php',
