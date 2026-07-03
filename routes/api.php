@@ -23,6 +23,9 @@ use App\Http\Controllers\Admin\HistoryController;
 use App\Http\Controllers\AIController;
 use App\Http\Controllers\Admin\ReportController;
 use App\Http\Controllers\Admin\ExportController;
+use App\Http\Controllers\Admin\AIBookDemandController;
+use App\Http\Controllers\Admin\FineController as AdminFineController;
+use App\Http\Controllers\Admin\PaymentController as AdminPaymentController;
 use App\Http\Controllers\NotificationController;
 
 
@@ -65,6 +68,7 @@ Route::get('private/v1/receipt/return/{borrow_id}',   [ReceiptController::class,
 Route::get('private/v1/reports/export/overdue-pdf',        [ExportController::class, 'overdueBooksPdf']);
 Route::get('private/v1/reports/export/transactions-pdf',   [ExportController::class, 'transactionsPdf']);
 Route::get('private/v1/reports/export/fine-report-pdf',    [ExportController::class, 'fineReportPdf']);
+Route::get('private/v1/reports/export/fine-report-csv',    [ExportController::class, 'fineReportCsv']);
 // Report CSV/Excel exports — same no-auth pattern: window.open() / download link cannot send Bearer header
 Route::get('private/v1/reports/export/transactions-csv',   [ExportController::class, 'transactionsCsv']);
 Route::get('private/v1/reports/export/top-books-csv',      [ExportController::class, 'topBooksCsv']);
@@ -211,6 +215,23 @@ Route::middleware(['auth:sanctum', 'role:admin,librarian'])->prefix('private/v1'
         Route::post('/cancel',      [AdminReservationController::class, 'cancelReservation']);
         Route::post('/expire',      [AdminReservationController::class, 'expireReservations']);
     });
+});
+
+// Module 3 — AI Phân tích nhu cầu sách
+Route::middleware(['auth:sanctum', 'role:admin,librarian'])->prefix('private/v1/ai')->group(function () {
+    Route::get('/import-suggestions', [AIBookDemandController::class, 'importSuggestions']);
+    Route::get('/low-borrow-books',   [AIBookDemandController::class, 'lowBorrowBooks']);
+    Route::get('/seasonal-demand',    [AIBookDemandController::class, 'seasonalDemand']);
+    Route::post('/cache/clear',       [AIBookDemandController::class, 'clearCache']);
+});
+
+// Module 5 — Quản lý Phí & Thanh toán
+Route::middleware(['auth:sanctum', 'role:admin,librarian'])->prefix('private/v1/fees')->group(function () {
+    Route::get('/',              [AdminFineController::class,    'index']);         // Danh sách phí chưa thu
+    Route::post('/damage',       [AdminFineController::class,    'createDamage']); // Tạo phí hỏng/mất
+    Route::post('/{id}/pay',     [AdminPaymentController::class, 'recordPayment']); // Ghi nhận thanh toán
+    Route::get('/history',       [AdminPaymentController::class, 'history']);      // Lịch sử thu phí
+    Route::get('/revenue',       [AdminPaymentController::class, 'revenue']);      // Báo cáo doanh thu
 });
 
 // Module 6 — Báo cáo & Thống kê

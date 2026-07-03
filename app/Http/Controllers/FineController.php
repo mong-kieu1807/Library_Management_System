@@ -18,10 +18,13 @@ class FineController extends Controller
         $userId = auth()->id();
 
         $rows = DB::table('fines as f')
-            ->join('borrow_transactions as bt', 'bt.borrow_id', '=', 'f.borrow_id')
-            ->join('borrow_details as bd', 'bd.borrow_id', '=', 'bt.borrow_id')
-            ->join('book_copies as bc', 'bc.copy_id', '=', 'bd.copy_id')
-            ->join('books as b', 'b.book_id', '=', 'bc.book_id')
+            ->leftJoin('borrow_transactions as bt', 'bt.borrow_id', '=', 'f.borrow_id')
+            ->leftJoin('borrow_details as bd', function ($join) {
+                $join->on('bd.borrow_id', '=', 'f.borrow_id')
+                     ->on('bd.copy_id', '=', 'f.copy_id');
+            })
+            ->leftJoin('book_copies as bc', 'bc.copy_id', '=', 'f.copy_id')
+            ->leftJoin('books as b', 'b.book_id', '=', 'bc.book_id')
             ->where('f.user_id', $userId)
             ->select([
                 'f.fine_id',
@@ -32,7 +35,6 @@ class FineController extends Controller
                 DB::raw("DATE_FORMAT(bt.borrow_date, '%Y-%m-%d') as borrow_date"),
                 DB::raw("DATE_FORMAT(bt.due_date,    '%Y-%m-%d') as due_date"),
                 DB::raw("DATE_FORMAT(bd.return_date, '%Y-%m-%d') as return_date"),
-                DB::raw("GREATEST(0, DATEDIFF(COALESCE(bd.return_date, CURDATE()), bt.due_date)) as days_late"),
                 'f.amount',
                 'f.reason',
                 'f.status',
@@ -41,17 +43,41 @@ class FineController extends Controller
             ->orderByDesc('f.fine_id')
             ->get();
 
-        $data = $rows->map(function ($row) {
+        // Lấy tất cả ngày nghỉ để loại trừ
+        $holidays = DB::table('holidays')->pluck('holiday_date')->toArray();
+
+        $data = $rows->map(function ($row) use ($holidays) {
+            $daysLate = 0;
+            if ($row->due_date) {
+                $due = \Carbon\Carbon::parse($row->due_date)->startOfDay();
+                $end = $row->return_date
+                    ? \Carbon\Carbon::parse($row->return_date)->startOfDay()
+                    : \Carbon\Carbon::today();
+
+                if ($end->gt($due)) {
+                    $overdueDays = (int) $end->diffInDays($due, true);
+                    $dueStr = $due->toDateString();
+                    $endStr = $end->toDateString();
+                    $holidayCount = 0;
+                    foreach ($holidays as $hDate) {
+                        if ($hDate > $dueStr && $hDate <= $endStr) {
+                            $holidayCount++;
+                        }
+                    }
+                    $daysLate = max(0, $overdueDays - $holidayCount);
+                }
+            }
+
             return [
                 'fine_id'     => $row->fine_id,
                 'borrow_id'   => $row->borrow_id,
                 'book_id'     => $row->book_id,
-                'title'       => $row->title,
+                'title'       => $row->title ?? '—',
                 'cover_image' => $row->cover_image,
                 'borrow_date' => $row->borrow_date,
                 'due_date'    => $row->due_date,
                 'return_date' => $row->return_date,
-                'days_late'   => (int)   $row->days_late,
+                'days_late'   => $daysLate,
                 'amount'      => (float) $row->amount,
                 'reason'      => $row->reason,
                 'status'      => $row->status === 'paid'
