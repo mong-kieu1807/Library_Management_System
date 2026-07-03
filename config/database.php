@@ -181,4 +181,22 @@ return [
 
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | mysqldump binary path (Module 7 — Backup & Restore)
+    |--------------------------------------------------------------------------
+    |
+    | Đường dẫn tới binary mysqldump dùng để tạo file backup .sql. Mặc định
+    | dùng "mysqldump" (dựa vào PATH của hệ thống, phù hợp môi trường Linux/
+    | Docker/production). Trên máy dev Windows nếu mysqldump chưa có trong PATH,
+    | khai báo MYSQLDUMP_PATH trong .env, ví dụ:
+    | MYSQLDUMP_PATH="C:\xampp\mysql\bin\mysqldump.exe"
+    |
+    | Đọc qua config() thay vì env() trực tiếp trong code để không bị vô hiệu
+    | hoá sau khi chạy php artisan config:cache.
+    |
+    */
+
+    'mysqldump_path' => env('MYSQLDUMP_PATH', 'mysqldump'),
+
 ];

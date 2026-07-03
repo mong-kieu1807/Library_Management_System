@@ -212,6 +212,14 @@ class ReturnController extends Controller
 
                 // Bulk INSERT (1 query) + UPDATE nếu cần
                 if (!empty($fineInserts)) {
+                    // TiDB: fine_id không có AUTO_INCREMENT -> tự sinh id tuần tự trước khi
+                    // insert (cùng pattern đã dùng ở HolidayController/ActivityLogService).
+                    $nextFineId = (int) (DB::table('fines')->lockForUpdate()->max('fine_id') ?? 0) + 1;
+                    foreach ($fineInserts as &$fineRow) {
+                        $fineRow['fine_id'] = $nextFineId++;
+                    }
+                    unset($fineRow);
+
                     DB::table('fines')->insert($fineInserts);
                 }
                 foreach ($fineUpdates as $fineId => $newAmount) {

@@ -74,14 +74,22 @@ class GoogleAuthController extends Controller
                     // [HOTFIX] TiDB: card_id không auto-increment — tự sinh ID
                     $nextCardId = (int) (DB::table('library_cards')->lockForUpdate()->max('card_id') ?? 0) + 1;
                     Log::debug('[LibraryCard Hotfix] Generated card_id = ' . $nextCardId);
+
+                    // Module 7: hạn mức thẻ Thường lấy từ system_settings thay vì hard-code,
+                    // để Admin cấu hình được qua Cài đặt hệ thống (card_regular_borrow_limit / card_regular_max_days).
+                    $cardDefaults = DB::table('system_settings')
+                        ->whereIn('config_key', ['card_regular_borrow_limit', 'card_regular_max_days'])
+                        ->pluck('config_value', 'config_key');
+
                     DB::table('library_cards')->insert([
                         'card_id'         => $nextCardId,
                         'user_id'         => $user->user_id,
                         'card_number'     => 'TV' . str_pad($user->user_id, 4, '0', STR_PAD_LEFT),
                         'issue_date'      => Carbon::today(),
                         'expiry_date'     => Carbon::today()->addYear(),
-                        'borrow_limit'    => 5,
-                        'max_borrow_days' => 14,
+                        'borrow_limit'    => (int) ($cardDefaults['card_regular_borrow_limit'] ?? 5),
+                        'max_borrow_days' => (int) ($cardDefaults['card_regular_max_days'] ?? 14),
+                        'card_type'       => 'regular',
                         'status'          => 1,
                     ]);
                 }
