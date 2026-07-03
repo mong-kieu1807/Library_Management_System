@@ -233,10 +233,16 @@ class ReturnController extends Controller
                     ->where('copy_id', $copyId)
                     ->value('book_id');
 
+                // Select the first waiting reservation for this book, but skip
+                // the user who is returning the copy (they shouldn't be notified).
+                // Lock the row to avoid race conditions when multiple returns
+                // happen concurrently.
                 $reservation = DB::table('reservations')
                     ->where('book_id', $bookId)
                     ->where('status', 'waiting')
+                    ->where('user_id', '<>', $userId)
                     ->orderBy('queue_position')
+                    ->lockForUpdate()
                     ->first();
 
                 if (!$reservation) {
@@ -260,32 +266,29 @@ class ReturnController extends Controller
                     ->first();
 
                 if ($user && $user->email) {
+                    $notifiedAt = now();
+                    $expiresAt  = now()->addDays(2);
 
-                    Mail::raw(
-            "Xin chào {$user->full_name},
+                    try {
+                        \Mail::to($user->email)->send(new \App\Mail\ReservationAvailableMail(
+                            $user->full_name,
+                            $book->title,
+                            config('app.name', 'Thư viện'),
+                            $notifiedAt->toDateTimeString(),
+                            $expiresAt->toDateTimeString()
+                        ));
+                    } catch (\Throwable $e) {
+                        // swallow mail errors to avoid breaking return flow; notification still created
+                    }
 
-            Sách bạn đã đặt trước hiện đã có sẵn.
-
-            Tên sách: {$book->title}
-
-            Vui lòng đến thư viện trong vòng 2 ngày để nhận sách.
-
-            Xin cảm ơn.",
-                    function ($message) use ($user) {
-                        $message
-                            ->to($user->email)
-                            ->subject('Sách đặt trước đã có sẵn');
-                    });
-
+                    Notification::create([
+                        'user_id' => $reservation->user_id,
+                        'title' => 'Sách đặt trước đã có sẵn',
+                        'content' => "Sách \"{$book->title}\" đã có sẵn. Vui lòng đến nhận trong vòng 2 ngày.",
+                        'type' => 'reservation',
+                        'is_read' => 0,
+                    ]);
                 }
-
-                Notification::create([
-                    'user_id' => $reservation->user_id,
-                    'title' => 'Sách đặt trước đã có sẵn',
-                    'content' => "Sách \"{$book->title}\" đã có sẵn. Vui lòng đến nhận trong vòng 2 ngày.",
-                    'type' => 'reservation',
-                    'is_read' => 0,
-                ]);
             }
                 return [
                     'return_date'          => $today->toDateString(),
