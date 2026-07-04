@@ -2,11 +2,14 @@
 
 namespace App\Http\Controllers\Admin;
 
+use App\Models\Notification;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\ReturnBookRequest;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Mail;
+
 
 class ReturnController extends Controller
 {
@@ -224,7 +227,76 @@ class ReturnController extends Controller
                 foreach ($fineUpdates as $fineId => $newAmount) {
                     DB::table('fines')->where('fine_id', $fineId)->update(['amount' => $newAmount]);
                 }
+                    Notification::create([
+                        'user_id' => $userId,
+                        'title' => 'Trả sách thành công',
+                        'content' => 'Thư viện đã xác nhận bạn trả sách thành công.',
+                        'type' => 'return',
+                        'is_read' => 0,
+                    ]);
+                                foreach ($copyIds as $copyId) {
 
+                $bookId = DB::table('book_copies')
+                    ->where('copy_id', $copyId)
+                    ->value('book_id');
+
+                // Select the first waiting reservation for this book, but skip
+                // the user who is returning the copy (they shouldn't be notified).
+                // Lock the row to avoid race conditions when multiple returns
+                // happen concurrently.
+                $reservation = DB::table('reservations')
+                    ->where('book_id', $bookId)
+                    ->where('status', 'waiting')
+                    ->where('user_id', '<>', $userId)
+                    ->orderBy('queue_position')
+                    ->lockForUpdate()
+                    ->first();
+
+                if (!$reservation) {
+                    continue;
+                }
+
+                DB::table('reservations')
+                    ->where('reservation_id', $reservation->reservation_id)
+                    ->update([
+                        'status' => 'ready',
+                        'notified_at' => now(),
+                        'expired_at' => now()->addDays(2),
+                    ]);
+
+                $user = DB::table('users')
+                    ->where('user_id', $reservation->user_id)
+                    ->first();
+
+                $book = DB::table('books')
+                    ->where('book_id', $bookId)
+                    ->first();
+
+                if ($user && $user->email) {
+                    $notifiedAt = now();
+                    $expiresAt  = now()->addDays(2);
+
+                    try {
+                        \Mail::to($user->email)->send(new \App\Mail\ReservationAvailableMail(
+                            $user->full_name,
+                            $book->title,
+                            config('app.name', 'Thư viện'),
+                            $notifiedAt->toDateTimeString(),
+                            $expiresAt->toDateTimeString()
+                        ));
+                    } catch (\Throwable $e) {
+                        // swallow mail errors to avoid breaking return flow; notification still created
+                    }
+
+                    Notification::create([
+                        'user_id' => $reservation->user_id,
+                        'title' => 'Sách đặt trước đã có sẵn',
+                        'content' => "Sách \"{$book->title}\" đã có sẵn. Vui lòng đến nhận trong vòng 2 ngày.",
+                        'type' => 'reservation',
+                        'is_read' => 0,
+                    ]);
+                }
+            }
                 return [
                     'return_date'          => $today->toDateString(),
                     'returned_books_count' => count($copyIds),

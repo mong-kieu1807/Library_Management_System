@@ -7,17 +7,9 @@ use Illuminate\Support\Facades\DB;
 
 class NotificationController extends Controller
 {
-    /**
-     * GET /v1/me/notifications
-     *
-     * Returns latest 50 notifications for the authenticated reader.
-     * Frontend polls this endpoint; when new unread notifications of type
-     * 'card_renewal' or 'borrow_renewal' arrive, React Query invalidates
-     * the relevant queries.
-     */
     public function index(Request $request)
     {
-        $userId = auth()->id();
+        $userId = $request->user()->user_id ?? auth()->id();
 
         $rows = DB::table('notifications')
             ->where('user_id', $userId)
@@ -32,14 +24,11 @@ class NotificationController extends Controller
             ->count();
 
         return response()->json([
-            'data'         => $rows,
+            'data' => $rows,
             'unread_count' => $unreadCount,
         ]);
     }
 
-    /**
-     * PATCH /v1/me/notifications/{id}/read
-     */
     public function markRead(int $id)
     {
         $userId = auth()->id();
@@ -52,9 +41,6 @@ class NotificationController extends Controller
         return response()->json(['message' => 'Đã đánh dấu đã đọc.']);
     }
 
-    /**
-     * PATCH /v1/me/notifications/read-all
-     */
     public function markAllRead()
     {
         $userId = auth()->id();

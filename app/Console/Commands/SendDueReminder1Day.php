@@ -21,7 +21,7 @@ class SendDueReminder1Day extends Command
      *
      * @var string
      */
-    protected $description = 'Command description';
+    protected $description = 'Gửi email nhắc trả sách trước 1 ngày';
 
     /**
      * Execute the console command.

@@ -15,22 +15,44 @@ class GoogleAuthController extends Controller
 {
     public function redirect()
     {
-        return Socialite::driver('google')->stateless()->redirect();
+        Log::debug('[GOOGLE TRACE] redirect entered');
+        Log::debug('[GOOGLE TRACE] google config values', [
+            'client_id' => config('services.google.client_id'),
+            'redirect'  => config('services.google.redirect'),
+        ]);
+
+        $response = Socialite::driver('google')->stateless()->redirect();
+
+        Log::debug('[GOOGLE TRACE] redirect response generated', [
+            'redirect_url' => method_exists($response, 'getTargetUrl') ? $response->getTargetUrl() : null,
+        ]);
+
+        return $response;
     }
 
     public function callback()
     {
+        Log::debug('[GOOGLE TRACE] callback entered', [
+            'query' => request()->query(),
+        ]);
+
         $frontendUrl = rtrim(env('FRONTEND_URL', 'http://localhost:3000'), '/');
         $errorBase   = "{$frontendUrl}/auth/google/callback?error=";
+
+        Log::debug('[GOOGLE TRACE] callback beginning Socialite user fetch', [
+            'client_id' => config('services.google.client_id'),
+            'redirect'  => config('services.google.redirect'),
+        ]);
 
         try {
             $googleUser = Socialite::driver('google')->stateless()->user();
         } catch (\Throwable $e) {
-            Log::error('[GoogleAuth] Socialite user() failed', [
+            Log::error('[GOOGLE TRACE] callback Socialite user() failed', [
                 'exception' => get_class($e),
                 'message'   => $e->getMessage(),
                 'file'      => $e->getFile(),
                 'line'      => $e->getLine(),
+                'stack'     => $e->getTraceAsString(),
                 'query'     => request()->query(),
             ]);
             return redirect($errorBase . 'oauth_failed');
