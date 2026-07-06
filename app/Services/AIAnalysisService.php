@@ -24,8 +24,10 @@ class AIAnalysisService
      * @param  array  $contents  Gemini contents array (role+parts)
      * @param  array  $tools     Function declarations (empty = no tools)
      * @param  string $systemPrompt  Optional system instruction text
+     * @param  array  $generationConfig  Optional passthrough (maxOutputTokens, thinkingConfig...).
+     *                Bỏ trống để giữ nguyên hành vi cũ cho các caller hiện có (AIController).
      */
-    public function generate(array $contents, array $tools = [], string $systemPrompt = ''): array
+    public function generate(array $contents, array $tools = [], string $systemPrompt = '', array $generationConfig = []): array
     {
         if (config('ai.mock_mode', false)) {
             return $this->mockGenerate($contents, $tools);
@@ -43,6 +45,10 @@ class AIAnalysisService
 
         if (!empty($tools)) {
             $payload['tools'] = [['function_declarations' => $tools]];
+        }
+
+        if (!empty($generationConfig)) {
+            $payload['generationConfig'] = $generationConfig;
         }
 
         $body = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);

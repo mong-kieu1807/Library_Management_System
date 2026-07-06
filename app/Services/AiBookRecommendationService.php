@@ -338,9 +338,16 @@ class AiBookRecommendationService
     private function explainWithGemini(int $readerId, Collection $categoryStats, Collection $history, Collection $candidates): array
     {
         try {
-            $response = $this->ai->generate([
-                ['role' => 'user', 'parts' => [['text' => $this->buildPrompt($categoryStats, $history, $candidates)]]],
-            ]);
+            // gemini-2.5-flash mặc định bật "thinking" (tốn token nội bộ trước khi
+            // sinh câu trả lời) -> với maxOutputTokens mặc định, phần JSON trả về
+            // hay bị cắt cụt giữa chừng khi có nhiều sách. Tắt thinking + tăng
+            // token để đảm bảo JSON luôn hoàn chỉnh.
+            $response = $this->ai->generate(
+                [['role' => 'user', 'parts' => [['text' => $this->buildPrompt($categoryStats, $history, $candidates)]]]],
+                [],
+                '',
+                ['maxOutputTokens' => 2048, 'thinkingConfig' => ['thinkingBudget' => 0]]
+            );
 
             $parts = $response['candidates'][0]['content']['parts'] ?? [];
             $text = collect($this->ai->parseParts($parts))->firstWhere('type', 'text')['text'] ?? '';
@@ -387,6 +394,10 @@ class AiBookRecommendationService
             $c->category
         ))->implode("\n");
 
+        $bookCount = $candidates->count();
+        $bookIdsList = $candidates->pluck('book_id')->implode(', ');
+        $exampleItems = $candidates->map(fn ($c) => '{"book_id":' . $c->book_id . ',"reason":"..."}')->implode(',');
+
         return <<<PROMPT
 Bạn là thủ thư AI.
 
@@ -395,18 +406,19 @@ Bạn là thủ thư AI.
 Lịch sử mượn gần nhất:
 {$historyText}
 
-Đây là các cuốn sách hệ thống đã chọn phù hợp (chỉ dùng đúng danh sách này, không tìm sách trên Internet, không tạo thêm sách):
+Đây là ĐÚNG {$bookCount} cuốn sách hệ thống đã chọn phù hợp (chỉ dùng đúng danh sách này, không tìm sách trên Internet, không tạo thêm sách):
 {$candidatesText}
 
 Hãy:
 1. Phân tích ngắn gọn sở thích đọc của độc giả (trường "analysis").
-2. Giải thích bằng tiếng Việt tự nhiên, ngắn gọn, dễ hiểu vì sao từng cuốn sách phù hợp (trường "reason" cho từng book_id).
+2. Giải thích bằng tiếng Việt tự nhiên, ngắn gọn, dễ hiểu vì sao từng cuốn sách phù hợp (trường "reason").
 
-Yêu cầu:
-- Chỉ dùng đúng các cuốn sách đã cho, không thêm/bớt.
+Yêu cầu bắt buộc:
+- Mảng "recommendations" PHẢI có ĐỦ và ĐÚNG {$bookCount} phần tử — mỗi book_id sau đây phải xuất hiện đúng 1 lần, không được bỏ sót cuốn nào: {$bookIdsList}.
+- Không thêm/bớt/đổi book_id ngoài danh sách trên.
 - Mỗi lý do 1-2 câu, văn phong thân thiện.
 - Chỉ trả về duy nhất JSON đúng định dạng sau, không thêm bất kỳ chữ hay ký hiệu nào khác (không markdown, không code fence):
-{"analysis":"...","recommendations":[{"book_id":123,"reason":"..."}]}
+{"analysis":"...","recommendations":[{$exampleItems}]}
 PROMPT;
     }
 
