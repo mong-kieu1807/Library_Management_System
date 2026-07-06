@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use App\Models\Role;
+use App\Services\ActivityLogService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
@@ -14,6 +15,10 @@ use Exception;
 
 class UserController extends Controller
 {
+    public function __construct(private ActivityLogService $activityLogService)
+    {
+    }
+
     /**
      * Map a User model to the front-end IDetailUser/IListUser structure.
      */
@@ -261,6 +266,9 @@ class UserController extends Controller
             ], 422);
         }
 
+        // Chụp lại status trước khi sửa để phát hiện khóa/mở khóa cho audit log bên dưới.
+        $oldStatus = (int) $user->status;
+
         // Cập nhật các trường
         if ($request->has('name')) {
             $user->full_name = $request->input('name');
@@ -302,12 +310,44 @@ class UserController extends Controller
 
         $user->save();
 
+        // Module 7 — Activity Log: chỉ log khi status thực sự đổi (khóa/mở khóa),
+        // không log các lần sửa trường khác không đụng tới status.
+        if ($request->has('status')) {
+            $lockAudit = self::buildLockAuditPayload($oldStatus, (int) $user->status);
+            if ($lockAudit !== null) {
+                $method = $lockAudit['action'] === 'lock' ? 'userLocked' : 'userUnlocked';
+                $this->activityLogService->{$method}(auth()->id(), $user->user_id, $lockAudit['old_data'], $lockAudit['new_data'], $request->ip());
+            }
+        }
+
         return response()->json([
             'code' => 200,
             'results' => [
                 'object' => $this->formatUser($user)
             ]
         ]);
+    }
+
+    /**
+     * So sánh status trước/sau để suy ra khóa hay mở khóa tài khoản, cùng payload
+     * before/after cho audit log. Tách riêng để test được mà không cần DB.
+     * Trả về null khi status không đổi (không cần ghi log).
+     *
+     * @return array{action: 'lock'|'unlock', old_data: array{status:string}, new_data: array{status:string}}|null
+     */
+    private static function buildLockAuditPayload(int $oldStatus, int $newStatus): ?array
+    {
+        if ($oldStatus === $newStatus) {
+            return null;
+        }
+
+        $label = fn (int $status) => $status === 1 ? 'active' : 'locked';
+
+        return [
+            'action'   => $newStatus === 0 ? 'lock' : 'unlock',
+            'old_data' => ['status' => $label($oldStatus)],
+            'new_data' => ['status' => $label($newStatus)],
+        ];
     }
 
     /**
