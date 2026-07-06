@@ -175,6 +175,9 @@ Route::middleware(['auth:sanctum', 'role:admin,librarian'])->prefix('private/v1'
     Route::get('/readers', [App\Http\Controllers\Admin\ReaderManagementController::class, 'index']);
     Route::get('/readers/{id}/borrow-history', [App\Http\Controllers\Admin\ReaderManagementController::class, 'borrowHistory']);
 
+    // "🤖 AI Gợi Ý Sách" — chat assistant cho thủ thư (nhớ ngữ cảnh qua conversation_id)
+    Route::post('/ai-assistant/chat', [App\Http\Controllers\Admin\AiAssistantController::class, 'chat']);
+
     // Access Audit Logs (Login Logs) for both admin and librarians
     Route::get('/login-logs', [App\Http\Controllers\Admin\LoginLogController::class, 'index']);
 
