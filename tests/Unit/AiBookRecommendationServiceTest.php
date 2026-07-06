@@ -165,6 +165,20 @@ class AiBookRecommendationServiceTest extends TestCase
         $this->assertStringContainsString('Kỹ năng (12)', $prompt);
         $this->assertStringContainsString('Sách A', $prompt);
         $this->assertStringContainsString('book_id=21', $prompt);
-        $this->assertStringContainsString('không tạo thêm sách', $prompt);
+        $this->assertStringContainsString('book_id: 21', $prompt);
+    }
+
+    // ── buildSystemPrompt ────────────────────────────────────────────────────
+
+    public function test_build_system_prompt_states_hard_constraints(): void
+    {
+        $service = $this->makeService();
+
+        $prompt = $this->invokePrivate($service, 'buildSystemPrompt', []);
+
+        $this->assertStringContainsString('TUYỆT ĐỐI không tự chọn thêm', $prompt);
+        $this->assertStringContainsString('TUYỆT ĐỐI không tìm kiếm sách trên Internet', $prompt);
+        $this->assertStringContainsString('TUYỆT ĐỐI không bịa đặt thông tin sách', $prompt);
+        $this->assertStringContainsString('không được bỏ sót cuốn nào', $prompt);
     }
 }

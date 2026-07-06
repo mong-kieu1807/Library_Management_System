@@ -345,7 +345,7 @@ class AiBookRecommendationService
             $response = $this->ai->generate(
                 [['role' => 'user', 'parts' => [['text' => $this->buildPrompt($categoryStats, $history, $candidates)]]]],
                 [],
-                '',
+                $this->buildSystemPrompt(),
                 ['maxOutputTokens' => 2048, 'thinkingConfig' => ['thinkingBudget' => 0]]
             );
 
@@ -369,6 +369,36 @@ class AiBookRecommendationService
 
             return ['analysis' => '', 'reasons' => []];
         }
+    }
+
+    /**
+     * Quy tắc cố định cho Gemini — cùng cấu trúc (== SECTION ==, "TUYỆT ĐỐI",
+     * ví dụ định dạng) với system_prompt của chatbot đọc sách phía độc giả
+     * (config('ai.system_prompt'), dùng trong AIController) để hai trợ lý AI
+     * trả lời cùng phong cách, chỉ khác nội dung nghiệp vụ. KHÔNG dùng chung
+     * config('ai.system_prompt') — service này độc lập, không đụng tới
+     * AIController/config/ai.php của chatbot độc giả.
+     */
+    private function buildSystemPrompt(): string
+    {
+        return <<<PROMPT
+Bạn là trợ lý AI gợi ý sách dành cho thủ thư trong Hệ thống Quản lý Thư viện.
+
+== PHẠM VI ==
+Chỉ làm đúng một việc: viết phân tích sở thích đọc và lý do gợi ý cho danh sách sách mà hệ thống đã chọn sẵn cho một độc giả cụ thể, dựa trên thống kê thể loại và lịch sử mượn được cung cấp trong tin nhắn.
+
+== QUY TẮC BẮT BUỘC ==
+1. TUYỆT ĐỐI không tự chọn thêm, bớt, hay đổi bất kỳ cuốn sách nào ngoài danh sách đã được cung cấp trong tin nhắn.
+2. TUYỆT ĐỐI không tìm kiếm sách trên Internet hay dùng kiến thức ngoài dữ liệu được cung cấp.
+3. TUYỆT ĐỐI không bịa đặt thông tin sách (tác giả, thể loại...) — chỉ dùng đúng dữ liệu đã cho.
+4. Mảng "recommendations" PHẢI có đủ một phần tử cho MỖI cuốn sách trong danh sách được cung cấp — không được bỏ sót cuốn nào, không trả lời một phần rồi dừng.
+5. Mỗi lý do 1-2 câu, ngắn gọn, dễ hiểu.
+6. Trả lời bằng tiếng Việt, thân thiện, tự nhiên — giống văn phong tư vấn của một thủ thư am hiểu độc giả.
+7. Chỉ trả về duy nhất JSON đúng định dạng yêu cầu, không thêm chữ, lời chào, giải thích, hay markdown/code fence nào khác.
+
+== VÍ DỤ ĐỊNH DẠNG PHẢN HỒI TỐT ==
+{"analysis":"Độc giả có xu hướng yêu thích sách kỹ năng mềm và phát triển bản thân.","recommendations":[{"book_id":21,"reason":"Bạn đọc thường mượn sách kỹ năng mềm, cuốn này sẽ giúp mở rộng kỹ năng giao tiếp."},{"book_id":45,"reason":"Cuốn này tiếp tục mạch chủ đề phát triển bản thân mà bạn đang quan tâm."}]}
+PROMPT;
     }
 
     private function buildPrompt(Collection $categoryStats, Collection $history, Collection $candidates): string
@@ -399,25 +429,17 @@ class AiBookRecommendationService
         $exampleItems = $candidates->map(fn ($c) => '{"book_id":' . $c->book_id . ',"reason":"..."}')->implode(',');
 
         return <<<PROMPT
-Bạn là thủ thư AI.
-
 Độc giả thường mượn: {$statsText}
 
 Lịch sử mượn gần nhất:
 {$historyText}
 
-Đây là ĐÚNG {$bookCount} cuốn sách hệ thống đã chọn phù hợp (chỉ dùng đúng danh sách này, không tìm sách trên Internet, không tạo thêm sách):
+Đây là ĐÚNG {$bookCount} cuốn sách hệ thống đã chọn phù hợp cho lần này:
 {$candidatesText}
 
-Hãy:
-1. Phân tích ngắn gọn sở thích đọc của độc giả (trường "analysis").
-2. Giải thích bằng tiếng Việt tự nhiên, ngắn gọn, dễ hiểu vì sao từng cuốn sách phù hợp (trường "reason").
+Hãy viết "analysis" (phân tích ngắn gọn sở thích đọc) và "reason" cho ĐỦ {$bookCount} cuốn trên — bắt buộc đủ các book_id: {$bookIdsList}.
 
-Yêu cầu bắt buộc:
-- Mảng "recommendations" PHẢI có ĐỦ và ĐÚNG {$bookCount} phần tử — mỗi book_id sau đây phải xuất hiện đúng 1 lần, không được bỏ sót cuốn nào: {$bookIdsList}.
-- Không thêm/bớt/đổi book_id ngoài danh sách trên.
-- Mỗi lý do 1-2 câu, văn phong thân thiện.
-- Chỉ trả về duy nhất JSON đúng định dạng sau, không thêm bất kỳ chữ hay ký hiệu nào khác (không markdown, không code fence):
+Định dạng JSON:
 {"analysis":"...","recommendations":[{$exampleItems}]}
 PROMPT;
     }
