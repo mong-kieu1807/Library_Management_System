@@ -34,7 +34,8 @@ Route::prefix('v1/auth')->group(function () {
     Route::post('/login', [AuthController::class, 'login']);
     Route::post('/verify-2fa', [AuthController::class, 'verify2fa'])->middleware('auth:sanctum');
     Route::post('/logout', [AuthController::class, 'logout']);
-    Route::post('/forgot-password', [ForgotPasswordController::class, 'sendResetLink']);
+    Route::post('/forgot-password', [ForgotPasswordController::class, 'sendOtp']);
+    Route::post('/verify-forgot-password-otp', [ForgotPasswordController::class, 'verifyOtp']);
     Route::post('/reset-password', [ForgotPasswordController::class, 'resetPassword']);
     Route::get('/google',          [GoogleAuthController::class, 'redirect']);
     Route::get('/google/callback', [GoogleAuthController::class, 'callback']);
