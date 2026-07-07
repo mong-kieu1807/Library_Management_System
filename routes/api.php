@@ -40,6 +40,7 @@ Route::prefix('v1/auth')->group(function () {
     Route::get('/google/callback', [GoogleAuthController::class, 'callback']);
     Route::get('/verify-email',         [AuthController::class, 'verifyEmail']);
     Route::post('/resend-verification', [AuthController::class, 'resendVerification']);
+    Route::post('/verify-registration-otp', [AuthController::class, 'verifyRegistrationOtp']);
 });
 
 Route::post('v1/ai/chat', [AIController::class, 'chat']);
