@@ -12,7 +12,7 @@ use Laravel\Sanctum\PersonalAccessToken;
 
 class ProfileController extends Controller
 {
-    private const OTP_EXPIRE_MINUTES = 15;
+    private const CHANGE_PASSWORD_OTP_EXPIRE_MINUTES = 15;
 
     /** Resolve authenticated user from Bearer token (mirrors logout pattern). */
     private function resolveUser(Request $request): ?User
@@ -105,6 +105,8 @@ class ProfileController extends Controller
     /**
      * Step 1: verify current password → generate OTP → send email.
      * User is identified from the Sanctum token (never from request body).
+     *
+     * Dùng chung bảng OTP nhưng mỗi nghiệp vụ có workflow độc lập.
      */
     public function requestChangePassword(Request $request)
     {
@@ -139,7 +141,7 @@ class ProfileController extends Controller
         Mail::raw(
             "Xin chào {$user->full_name},\n\n"
             . "Mã OTP xác nhận đổi mật khẩu của bạn: {$otp}\n\n"
-            . "Mã có hiệu lực trong " . self::OTP_EXPIRE_MINUTES . " phút.\n"
+            . "Mã có hiệu lực trong " . self::CHANGE_PASSWORD_OTP_EXPIRE_MINUTES . " phút.\n"
             . "Không chia sẻ mã này với bất kỳ ai.\n\n"
             . "Nếu bạn không yêu cầu đổi mật khẩu, hãy bỏ qua email này.",
             function ($message) use ($user) {
@@ -180,7 +182,7 @@ class ProfileController extends Controller
             ], 422);
         }
 
-        if (Carbon::parse($record->created_at)->addMinutes(self::OTP_EXPIRE_MINUTES)->isPast()) {
+        if (Carbon::parse($record->created_at)->addMinutes(self::CHANGE_PASSWORD_OTP_EXPIRE_MINUTES)->isPast()) {
             DB::table('change_password_otps')->where('email', $user->email)->delete();
             return response()->json([
                 'message' => 'OTP không hợp lệ hoặc đã hết hạn.',
