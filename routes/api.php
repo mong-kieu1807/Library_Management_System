@@ -144,10 +144,12 @@ Route::middleware('auth:sanctum')->prefix('v1/me')->group(function () {
     // Library Card renewal (M1.6)
     Route::post('/library-card/renewal-request', [LibraryCardController::class, 'submitRenewalRequest']);
     Route::get('/library-card/renewal-requests', [LibraryCardController::class, 'myRenewalRequests']);
+    Route::delete('/library-card/renewal-request/{id}', [LibraryCardController::class, 'cancelRenewalRequest']);
 
     Route::get('/borrowing', [BorrowingController::class, 'index']);
     Route::get('/borrowing/history', [BorrowingController::class, 'history']);
     Route::post('/borrowing/{borrowId}/renew', [BorrowingController::class, 'renew']);
+    Route::delete('/borrowing/{borrowId}/renew', [BorrowingController::class, 'cancelRenewal']);
     Route::get('/fines', [FineController::class, 'index']);
     Route::get('/wishlist',                 [WishlistController::class, 'index']);
     Route::post('/wishlist',                [WishlistController::class, 'store']);

@@ -117,4 +117,56 @@ class LibraryCardController extends Controller
 
         return response()->json(['data' => $rows]);
     }
+
+    /**
+     * DELETE /v1/me/library-card/renewal-request/{id}
+     *
+     * Reader tự hủy yêu cầu gia hạn thẻ. Chỉ cho phép hủy ở trạng thái Pending.
+     * lockForUpdate + re-check status trong transaction để tránh race với
+     * Admin duyệt/từ chối cùng lúc — chỉ một thao tác được thắng.
+     */
+    public function cancelRenewalRequest(Request $request, int $id)
+    {
+        $userId = auth()->id();
+
+        try {
+            DB::transaction(function () use ($id, $userId) {
+                $renewRequest = DB::table('card_renewal_requests')
+                    ->where('request_id', $id)
+                    ->where('user_id', $userId)
+                    ->lockForUpdate()
+                    ->first();
+
+                if (!$renewRequest) {
+                    throw new \RuntimeException('NOT_FOUND');
+                }
+
+                if ($renewRequest->status !== 'pending') {
+                    throw new \RuntimeException('NOT_PENDING');
+                }
+
+                DB::table('card_renewal_requests')
+                    ->where('request_id', $id)
+                    ->where('status', 'pending')
+                    ->update(['status' => 'cancelled']);
+
+                DB::table('notifications')->insert([
+                    'user_id'    => $userId,
+                    'title'      => 'Đã hủy yêu cầu gia hạn thẻ',
+                    'content'    => 'Bạn đã hủy yêu cầu gia hạn thẻ thư viện.',
+                    'type'       => 'card_renewal',
+                    'is_read'    => 0,
+                    'created_at' => now(),
+                ]);
+            });
+        } catch (\RuntimeException $e) {
+            if ($e->getMessage() === 'NOT_FOUND') {
+                return response()->json(['message' => 'Không tìm thấy yêu cầu gia hạn thẻ.'], 404);
+            }
+
+            return response()->json(['message' => 'Yêu cầu đã được xử lý, không thể hủy.'], 422);
+        }
+
+        return response()->json(['message' => 'Đã hủy yêu cầu gia hạn thẻ.']);
+    }
 }

@@ -50,48 +50,59 @@ class LibraryCardController extends Controller
      * 1. Cập nhật library_cards.expiry_date
      * 2. Đánh dấu request approved
      * 3. Tạo notification cho reader
+     *
+     * lockForUpdate + re-check status BÊN TRONG transaction (không phải ở
+     * SELECT ngoài) để tránh race với Reader hủy cùng lúc — request đã bị
+     * hủy/xử lý bởi thao tác khác sẽ không còn ở trạng thái pending khi
+     * transaction này lấy được lock, và sẽ bị từ chối ở đây.
      */
     public function approve(Request $request, int $id)
     {
-        $adminId = auth()->id();
-
-        $renewRequest = DB::table('card_renewal_requests')
-            ->where('request_id', $id)
-            ->where('status', 'pending')
-            ->first();
-
-        if (!$renewRequest) {
-            return response()->json(['message' => 'Yêu cầu không tồn tại hoặc đã được xử lý.'], 404);
-        }
-
+        $adminId    = auth()->id();
         $reviewNote = $request->input('review_note');
 
-        DB::transaction(function () use ($renewRequest, $adminId, $reviewNote) {
-            // 1. Cập nhật expiry_date trên thẻ thư viện
-            DB::table('library_cards')
-                ->where('card_id', $renewRequest->card_id)
-                ->update(['expiry_date' => $renewRequest->requested_expiry_date]);
+        try {
+            $renewRequest = DB::transaction(function () use ($id, $adminId, $reviewNote) {
+                $renewRequest = DB::table('card_renewal_requests')
+                    ->where('request_id', $id)
+                    ->lockForUpdate()
+                    ->first();
 
-            // 2. Cập nhật trạng thái request
-            DB::table('card_renewal_requests')
-                ->where('request_id', $renewRequest->request_id)
-                ->update([
-                    'status'      => 'approved',
-                    'reviewed_by' => $adminId,
-                    'review_note' => $reviewNote,
+                if (!$renewRequest || $renewRequest->status !== 'pending') {
+                    throw new \RuntimeException('NOT_PENDING');
+                }
+
+                // 1. Cập nhật expiry_date trên thẻ thư viện
+                DB::table('library_cards')
+                    ->where('card_id', $renewRequest->card_id)
+                    ->update(['expiry_date' => $renewRequest->requested_expiry_date]);
+
+                // 2. Cập nhật trạng thái request
+                DB::table('card_renewal_requests')
+                    ->where('request_id', $renewRequest->request_id)
+                    ->where('status', 'pending')
+                    ->update([
+                        'status'      => 'approved',
+                        'reviewed_by' => $adminId,
+                        'review_note' => $reviewNote,
+                    ]);
+
+                // 3. Tạo notification cho reader
+                DB::table('notifications')->insert([
+                    'user_id'    => $renewRequest->user_id,
+                    'title'      => 'Gia hạn thẻ thư viện thành công',
+                    'content'    => 'Yêu cầu gia hạn thẻ thư viện của bạn đã được duyệt. Ngày hết hạn mới: '
+                        . Carbon::parse($renewRequest->requested_expiry_date)->format('d/m/Y') . '.',
+                    'type'       => 'card_renewal',
+                    'is_read'    => 0,
+                    'created_at' => now(),
                 ]);
 
-            // 3. Tạo notification cho reader
-            DB::table('notifications')->insert([
-                'user_id'    => $renewRequest->user_id,
-                'title'      => 'Gia hạn thẻ thư viện thành công',
-                'content'    => 'Yêu cầu gia hạn thẻ thư viện của bạn đã được duyệt. Ngày hết hạn mới: '
-                    . Carbon::parse($renewRequest->requested_expiry_date)->format('d/m/Y') . '.',
-                'type'       => 'card_renewal',
-                'is_read'    => 0,
-                'created_at' => now(),
-            ]);
-        });
+                return $renewRequest;
+            });
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => 'Yêu cầu không tồn tại hoặc đã được xử lý.'], 404);
+        }
 
         return response()->json(['message' => 'Đã duyệt gia hạn thẻ thư viện thành công.']);
     }
@@ -99,41 +110,46 @@ class LibraryCardController extends Controller
     /**
      * POST /private/v1/library-card-renewal/{id}/reject
      *
-     * Admin từ chối yêu cầu gia hạn thẻ.
+     * Admin từ chối yêu cầu gia hạn thẻ. Cùng cơ chế lockForUpdate + re-check
+     * như approve() để tránh race với Reader hủy cùng lúc.
      */
     public function reject(Request $request, int $id)
     {
-        $adminId = auth()->id();
-
-        $renewRequest = DB::table('card_renewal_requests')
-            ->where('request_id', $id)
-            ->where('status', 'pending')
-            ->first();
-
-        if (!$renewRequest) {
-            return response()->json(['message' => 'Yêu cầu không tồn tại hoặc đã được xử lý.'], 404);
-        }
-
+        $adminId    = auth()->id();
         $reviewNote = $request->input('review_note', 'Yêu cầu bị từ chối.');
 
-        DB::transaction(function () use ($renewRequest, $adminId, $reviewNote) {
-            DB::table('card_renewal_requests')
-                ->where('request_id', $renewRequest->request_id)
-                ->update([
-                    'status'      => 'rejected',
-                    'reviewed_by' => $adminId,
-                    'review_note' => $reviewNote,
-                ]);
+        try {
+            DB::transaction(function () use ($id, $adminId, $reviewNote) {
+                $renewRequest = DB::table('card_renewal_requests')
+                    ->where('request_id', $id)
+                    ->lockForUpdate()
+                    ->first();
 
-            DB::table('notifications')->insert([
-                'user_id'    => $renewRequest->user_id,
-                'title'      => 'Yêu cầu gia hạn thẻ bị từ chối',
-                'content'    => 'Yêu cầu gia hạn thẻ thư viện của bạn đã bị từ chối. Lý do: ' . $reviewNote,
-                'type'       => 'card_renewal',
-                'is_read'    => 0,
-                'created_at' => now(),
-            ]);
-        });
+                if (!$renewRequest || $renewRequest->status !== 'pending') {
+                    throw new \RuntimeException('NOT_PENDING');
+                }
+
+                DB::table('card_renewal_requests')
+                    ->where('request_id', $renewRequest->request_id)
+                    ->where('status', 'pending')
+                    ->update([
+                        'status'      => 'rejected',
+                        'reviewed_by' => $adminId,
+                        'review_note' => $reviewNote,
+                    ]);
+
+                DB::table('notifications')->insert([
+                    'user_id'    => $renewRequest->user_id,
+                    'title'      => 'Yêu cầu gia hạn thẻ bị từ chối',
+                    'content'    => 'Yêu cầu gia hạn thẻ thư viện của bạn đã bị từ chối. Lý do: ' . $reviewNote,
+                    'type'       => 'card_renewal',
+                    'is_read'    => 0,
+                    'created_at' => now(),
+                ]);
+            });
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => 'Yêu cầu không tồn tại hoặc đã được xử lý.'], 404);
+        }
 
         return response()->json(['message' => 'Đã từ chối yêu cầu gia hạn thẻ.']);
     }
