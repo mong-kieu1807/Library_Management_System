@@ -328,6 +328,7 @@ class ReservationController extends Controller
                     'status'      => 'converted',
                     'notified_at' => now(),
                 ]);
+                $bookTitle = DB::table('books')->where('book_id', $reservation->book_id)->value('title');
                 DB::table('notifications')->insert([
                     'user_id' => $userId,
                     'title' => 'Đặt trước hoàn tất',
@@ -336,7 +337,6 @@ class ReservationController extends Controller
                     'is_read' => 0,
                     'created_at' => now(),
                 ]);
-                $bookTitle = DB::table('books')->where('book_id', $reservation->book_id)->value('title');
 
                 return [
                     'borrow_id'   => $borrowId,
