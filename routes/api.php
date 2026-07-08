@@ -28,6 +28,8 @@ use App\Http\Controllers\Admin\AIBookDemandController;
 use App\Http\Controllers\Admin\FineController as AdminFineController;
 use App\Http\Controllers\Admin\PaymentController as AdminPaymentController;
 
+Schedule::command('library:weekly-summary')
+    ->weeklyOn(1, '08:00');
 
 Route::prefix('v1/auth')->group(function () {
     Route::post('/register', [AuthController::class, 'register']);
