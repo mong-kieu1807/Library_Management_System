@@ -55,7 +55,7 @@ class BookController extends Controller
         $authorNorm = $this->viNormSql('a.author_name');
         $descNorm   = $this->viNormSql('b.description');
 
-        $books = DB::table('books as b')
+        $baseQuery = DB::table('books as b')
             ->leftJoin('book_authors as ba', 'b.book_id', '=', 'ba.book_id')
             ->leftJoin('authors as a', 'ba.author_id', '=', 'a.author_id')
             // full-text search (diacritic-insensitive)
@@ -103,6 +103,10 @@ class BookController extends Controller
                     "(SELECT COUNT(*) FROM book_copies WHERE book_id = b.book_id AND status = 'available') > 0"
                 );
             })
+            ;
+
+        // Không phân trang — trả toàn bộ sách khớp điều kiện lọc/tìm kiếm.
+        $books = $baseQuery
             ->select(
                 'b.book_id',
                 'b.title',
@@ -113,10 +117,21 @@ class BookController extends Controller
             )
             ->groupBy('b.book_id', 'b.title', 'b.isbn', 'b.cover_image')
             ->orderBy('b.title')
-            ->limit(50)
             ->get();
 
-        return response()->json($books);
+        $total = $books->count();
+
+        return response()->json([
+            'data'       => $books->values(),
+            // Giữ nguyên metadata phân trang trong response để không đổi cấu trúc JSON,
+            // nhưng luôn là "1 trang chứa toàn bộ" — Frontend không dùng phần này nữa.
+            'pagination' => [
+                'current_page' => 1,
+                'last_page'    => 1,
+                'per_page'     => $total,
+                'total'        => $total,
+            ],
+        ]);
     }
 
     public function home()
