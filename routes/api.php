@@ -34,12 +34,14 @@ Route::prefix('v1/auth')->group(function () {
     Route::post('/login', [AuthController::class, 'login']);
     Route::post('/verify-2fa', [AuthController::class, 'verify2fa'])->middleware('auth:sanctum');
     Route::post('/logout', [AuthController::class, 'logout']);
-    Route::post('/forgot-password', [ForgotPasswordController::class, 'sendResetLink']);
+    Route::post('/forgot-password', [ForgotPasswordController::class, 'sendOtp']);
+    Route::post('/verify-forgot-password-otp', [ForgotPasswordController::class, 'verifyOtp']);
     Route::post('/reset-password', [ForgotPasswordController::class, 'resetPassword']);
     Route::get('/google',          [GoogleAuthController::class, 'redirect']);
     Route::get('/google/callback', [GoogleAuthController::class, 'callback']);
     Route::get('/verify-email',         [AuthController::class, 'verifyEmail']);
     Route::post('/resend-verification', [AuthController::class, 'resendVerification']);
+    Route::post('/verify-registration-otp', [AuthController::class, 'verifyRegistrationOtp']);
 });
 
 Route::post('v1/ai/chat', [AIController::class, 'chat']);
@@ -143,10 +145,12 @@ Route::middleware('auth:sanctum')->prefix('v1/me')->group(function () {
     // Library Card renewal (M1.6)
     Route::post('/library-card/renewal-request', [LibraryCardController::class, 'submitRenewalRequest']);
     Route::get('/library-card/renewal-requests', [LibraryCardController::class, 'myRenewalRequests']);
+    Route::delete('/library-card/renewal-request/{id}', [LibraryCardController::class, 'cancelRenewalRequest']);
 
     Route::get('/borrowing', [BorrowingController::class, 'index']);
     Route::get('/borrowing/history', [BorrowingController::class, 'history']);
     Route::post('/borrowing/{borrowId}/renew', [BorrowingController::class, 'renew']);
+    Route::delete('/borrowing/{borrowId}/renew', [BorrowingController::class, 'cancelRenewal']);
     Route::get('/fines', [FineController::class, 'index']);
     Route::get('/wishlist',                 [WishlistController::class, 'index']);
     Route::post('/wishlist',                [WishlistController::class, 'store']);
@@ -175,6 +179,9 @@ Route::middleware(['auth:sanctum', 'role:admin,librarian'])->prefix('private/v1'
     // Reader list + borrow history — accessible by both admin and librarians
     Route::get('/readers', [App\Http\Controllers\Admin\ReaderManagementController::class, 'index']);
     Route::get('/readers/{id}/borrow-history', [App\Http\Controllers\Admin\ReaderManagementController::class, 'borrowHistory']);
+
+    // "🤖 AI Gợi Ý Sách" — chat assistant cho thủ thư (nhớ ngữ cảnh qua conversation_id)
+    Route::post('/ai-assistant/chat', [App\Http\Controllers\Admin\AiAssistantController::class, 'chat']);
 
     // Access Audit Logs (Login Logs) for both admin and librarians
     Route::get('/login-logs', [App\Http\Controllers\Admin\LoginLogController::class, 'index']);

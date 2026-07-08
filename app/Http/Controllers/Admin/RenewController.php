@@ -7,7 +7,6 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\RenewBookRequest;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use App\Models\Notification;
 
 class RenewController extends Controller
 {
@@ -77,14 +76,6 @@ class RenewController extends Controller
                     'deny_reason'     => $denyReason,
                 ];
             });
-
-Notification::create([
-    'user_id' => $userId,
-    'title' => 'Gia hạn thành công',
-    'content' => "Bạn đã gia hạn thành công " . count($copyIds) . " cuốn sách.",
-    'type' => 'renew',
-    'is_read' => 0,
-]);
 
         return response()->json([
             'code'    => 200,
@@ -185,16 +176,19 @@ Notification::create([
 
                     // [5] Nếu có borrow_renewal_request đang pending khớp giao dịch này
                     // (Reader đã gửi yêu cầu gia hạn) → duyệt luôn + tạo notification.
-                    // [5] Mark pending borrow_renewal_request approved + tạo notification
+                    // lockForUpdate + re-check status: tránh race với Reader hủy yêu cầu
+                    // cùng lúc admin renew trực tiếp tại quầy.
                     $pendingRequest = DB::table('borrow_renewal_requests')
                         ->where('borrow_id', (int) $borrowId)
                         ->where('user_id', $userId)
                         ->where('status', 'pending')
+                        ->lockForUpdate()
                         ->first();
 
                     if ($pendingRequest) {
                         DB::table('borrow_renewal_requests')
                             ->where('request_id', $pendingRequest->request_id)
+                            ->where('status', 'pending')
                             ->update([
                                 'status'      => 'approved',
                                 'reviewed_by' => $adminId,
@@ -255,43 +249,50 @@ Notification::create([
      *
      * Admin từ chối yêu cầu gia hạn sách (id = borrow_renewal_requests.request_id).
      * KHÔNG đụng due_date / renew_count — chỉ cập nhật request + tạo notification.
+     *
+     * lockForUpdate + re-check status BÊN TRONG transaction để tránh race với
+     * Reader hủy yêu cầu cùng lúc — chỉ một thao tác được thắng.
      */
     public function rejectBook(Request $request, int $id)
     {
-        $adminId = auth()->id();
+        $adminId    = auth()->id();
+        $reviewNote = $request->input('review_note', 'Yêu cầu bị từ chối.');
 
-        $renewRequest = DB::table('borrow_renewal_requests')
-            ->where('request_id', $id)
-            ->where('status', 'pending')
-            ->first();
+        try {
+            DB::transaction(function () use ($id, $adminId, $reviewNote) {
+                $renewRequest = DB::table('borrow_renewal_requests')
+                    ->where('request_id', $id)
+                    ->lockForUpdate()
+                    ->first();
 
-        if (!$renewRequest) {
+                if (!$renewRequest || $renewRequest->status !== 'pending') {
+                    throw new \RuntimeException('NOT_PENDING');
+                }
+
+                DB::table('borrow_renewal_requests')
+                    ->where('request_id', $renewRequest->request_id)
+                    ->where('status', 'pending')
+                    ->update([
+                        'status'      => 'rejected',
+                        'reviewed_by' => $adminId,
+                        'review_note' => $reviewNote,
+                    ]);
+
+                DB::table('notifications')->insert([
+                    'user_id'    => $renewRequest->user_id,
+                    'title'      => 'Yêu cầu gia hạn sách bị từ chối',
+                    'content'    => 'Yêu cầu gia hạn sách của bạn đã bị từ chối. Lý do: ' . $reviewNote,
+                    'type'       => 'borrow_renewal',
+                    'is_read'    => 0,
+                    'created_at' => now(),
+                ]);
+            });
+        } catch (\RuntimeException $e) {
             return response()->json([
                 'code'    => 404,
                 'message' => 'Yêu cầu không tồn tại hoặc đã được xử lý.',
             ], 404);
         }
-
-        $reviewNote = $request->input('review_note', 'Yêu cầu bị từ chối.');
-
-        DB::transaction(function () use ($renewRequest, $adminId, $reviewNote) {
-            DB::table('borrow_renewal_requests')
-                ->where('request_id', $renewRequest->request_id)
-                ->update([
-                    'status'      => 'rejected',
-                    'reviewed_by' => $adminId,
-                    'review_note' => $reviewNote,
-                ]);
-
-            DB::table('notifications')->insert([
-                'user_id'    => $renewRequest->user_id,
-                'title'      => 'Yêu cầu gia hạn sách bị từ chối',
-                'content'    => 'Yêu cầu gia hạn sách của bạn đã bị từ chối. Lý do: ' . $reviewNote,
-                'type'       => 'borrow_renewal',
-                'is_read'    => 0,
-                'created_at' => now(),
-            ]);
-        });
 
         return response()->json([
             'code'    => 200,

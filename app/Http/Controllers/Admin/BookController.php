@@ -9,6 +9,7 @@ use App\Models\Book;
 use App\Models\BookCopy;
 use App\Models\BookEditHistory;
 use App\Models\Publisher;
+use App\Services\ActivityLogService;
 use App\Services\GoogleBooksService;
 use Intervention\Image\Laravel\Facades\Image;
 use Illuminate\Http\Request;
@@ -21,8 +22,10 @@ use Illuminate\Validation\Rule;
 
 class BookController extends Controller
 {
-    public function __construct(private GoogleBooksService $googleBooksService)
-    {
+    public function __construct(
+        private GoogleBooksService $googleBooksService,
+        private ActivityLogService $activityLogService
+    ) {
     }
 
     /**
@@ -493,6 +496,13 @@ class BookController extends Controller
             Storage::disk('public')->delete($oldCoverImagePathForCleanup);
         }
 
+        // Module 7 — Activity Log: ghi 1 dòng log gộp cho toàn bộ trường đã đổi,
+        // tái dùng $changes (đã tính sẵn cho book_edit_histories) thay vì tính lại.
+        if (!empty($changes)) {
+            $auditPayload = self::buildBookAuditPayload($changes);
+            $this->activityLogService->bookUpdated($editedBy, $book->book_id, $auditPayload['old'], $auditPayload['new'], $request->ip());
+        }
+
         return response()->json(
             Book::with(['authors', 'categories', 'publisher', 'bookEditHistories.user'])->findOrFail($id),
             200
@@ -511,6 +521,25 @@ class BookController extends Controller
         $book->delete();
 
         return response()->json(['message' => 'Xóa thành công']);
+    }
+
+    /**
+     * Gom các dòng $changes (field_name/old_value/new_value) thành 2 mảng phẳng
+     * before/after cho audit_logs. Tách riêng để test được mà không cần DB.
+     *
+     * @param array<int, array{field_name:string, old_value:mixed, new_value:mixed}> $changes
+     * @return array{old: array<string, mixed>, new: array<string, mixed>}
+     */
+    private static function buildBookAuditPayload(array $changes): array
+    {
+        $old = [];
+        $new = [];
+        foreach ($changes as $change) {
+            $old[$change['field_name']] = $change['old_value'];
+            $new[$change['field_name']] = $change['new_value'];
+        }
+
+        return ['old' => $old, 'new' => $new];
     }
 
     private function makeHistoryRow(int $bookId, int $editedBy, string $field, mixed $oldValue, mixed $newValue, ?string $reason): array
