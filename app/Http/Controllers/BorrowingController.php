@@ -226,4 +226,57 @@ class BorrowingController extends Controller
             'pending'    => true,
         ], 201);
     }
+
+    /**
+     * DELETE /v1/me/borrowing/{borrowId}/renew
+     *
+     * Reader tự hủy yêu cầu gia hạn sách. Chỉ cho phép hủy ở trạng thái Pending.
+     * lockForUpdate + re-check status trong transaction để tránh race với
+     * Admin duyệt/từ chối cùng lúc — chỉ một thao tác được thắng.
+     */
+    public function cancelRenewal(Request $request, int $borrowId)
+    {
+        $userId = auth()->id();
+
+        try {
+            DB::transaction(function () use ($borrowId, $userId) {
+                $renewRequest = DB::table('borrow_renewal_requests')
+                    ->where('borrow_id', $borrowId)
+                    ->where('user_id', $userId)
+                    ->orderByDesc('request_id')
+                    ->lockForUpdate()
+                    ->first();
+
+                if (!$renewRequest) {
+                    throw new \RuntimeException('NOT_FOUND');
+                }
+
+                if ($renewRequest->status !== 'pending') {
+                    throw new \RuntimeException('NOT_PENDING');
+                }
+
+                DB::table('borrow_renewal_requests')
+                    ->where('request_id', $renewRequest->request_id)
+                    ->where('status', 'pending')
+                    ->update(['status' => 'cancelled']);
+
+                DB::table('notifications')->insert([
+                    'user_id'    => $userId,
+                    'title'      => 'Đã hủy yêu cầu gia hạn sách',
+                    'content'    => 'Bạn đã hủy yêu cầu gia hạn sách.',
+                    'type'       => 'borrow_renewal',
+                    'is_read'    => 0,
+                    'created_at' => now(),
+                ]);
+            });
+        } catch (\RuntimeException $e) {
+            if ($e->getMessage() === 'NOT_FOUND') {
+                return response()->json(['message' => 'Không tìm thấy yêu cầu gia hạn.'], 404);
+            }
+
+            return response()->json(['message' => 'Yêu cầu đã được xử lý, không thể hủy.'], 422);
+        }
+
+        return response()->json(['message' => 'Đã hủy yêu cầu gia hạn sách.']);
+    }
 }
