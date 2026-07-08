@@ -16,6 +16,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 
@@ -88,13 +89,13 @@ class BookController extends Controller
 
         if (!isset($data['items'][0])) {
             return response()->json([
-                'message' => 'Khong tim thay sach voi ISBN nay',
+                'message' => 'Không tìm thấy sách với ISBN này.',
             ], 404);
         }
 
         $bookData = $data['items'][0]['volumeInfo'];
-        $authorName = $bookData['authors'][0] ?? null;
-        $publisherName = $bookData['publisher'] ?? null;
+        $authorName = $bookData['authors'][0] ?? 'Không rõ tác giả';
+        $publisherName = $bookData['publisher'] ?? 'Không rõ nhà xuất bản';
         $publishDate = $bookData['publishedDate'] ?? null;
 
         if ($publishDate) {
@@ -105,45 +106,57 @@ class BookController extends Controller
             }
         }
 
-        $author = Author::firstOrCreate([
-            'author_name' => $authorName,
-        ]);
-
-        $publisher = Publisher::firstOrCreate([
-            'name' => $publisherName,
-        ]);
-
-        $book = DB::transaction(function () use ($bookData, $isbn, $publisher, $author, $publishDate) {
-            $book = Book::create([
-                'title' => $bookData['title'] ?? null,
-                'isbn' => $isbn,
-                'publisher_id' => $publisher->publisher_id,
-                'author_id' => $author->author_id,
-                'publish_date' => $publishDate,
-                'pages' => $bookData['pageCount'] ?? null,
-                'description' => $bookData['description'] ?? null,
-                'cover_image' => $bookData['imageLinks']['thumbnail'] ?? null,
-                'language' => $bookData['language'] ?? null,
-                'avg_rating' => $bookData['averageRating'] ?? null,
-                'total_reviews' => $bookData['ratingsCount'] ?? null,
-                'replacement_cost' => 80000,
-                'dimensions' => '13x20cm',
-                'cover_type' => 'Bia mem',
-            ]);
-            $book->authors()->sync([$author->author_id]);
-
-            // Auto Import luôn tạo sẵn 1 bản sao với barcode tự sinh, cùng cách với "Thêm sách thủ công".
-            BookCopy::create([
-                'book_id' => $book->book_id,
-                'barcode' => BookCopy::generateUniqueBarcode(),
-                'status' => 'available',
-                'condition' => 'good',
-                'shelf_location' => null,
-                'acquisition_date' => now()->toDateString(),
+        try {
+            $author = Author::firstOrCreate([
+                'author_name' => $authorName,
             ]);
 
-            return $book;
-        });
+            $publisher = Publisher::firstOrCreate([
+                'name' => $publisherName,
+            ]);
+
+            $book = DB::transaction(function () use ($bookData, $isbn, $publisher, $author, $publishDate) {
+                $book = Book::create([
+                    'title' => $bookData['title'] ?? null,
+                    'isbn' => $isbn,
+                    'publisher_id' => $publisher->publisher_id,
+                    'author_id' => $author->author_id,
+                    'publish_date' => $publishDate,
+                    'pages' => $bookData['pageCount'] ?? null,
+                    'description' => $bookData['description'] ?? null,
+                    'cover_image' => $bookData['imageLinks']['thumbnail'] ?? null,
+                    'language' => $bookData['language'] ?? null,
+                    'avg_rating' => $bookData['averageRating'] ?? null,
+                    'total_reviews' => $bookData['ratingsCount'] ?? null,
+                    'replacement_cost' => 80000,
+                    'dimensions' => '13x20cm',
+                    'cover_type' => 'Bia mem',
+                ]);
+                $book->authors()->sync([$author->author_id]);
+
+                // Auto Import luôn tạo sẵn 1 bản sao với barcode tự sinh, cùng cách với "Thêm sách thủ công".
+                BookCopy::create([
+                    'book_id' => $book->book_id,
+                    'barcode' => BookCopy::generateUniqueBarcode(),
+                    'status' => 'available',
+                    'condition' => 'good',
+                    'shelf_location' => null,
+                    'acquisition_date' => now()->toDateString(),
+                ]);
+
+                return $book;
+            });
+        } catch (\Illuminate\Database\QueryException $e) {
+            if (str_contains($e->getMessage(), 'isbn')) {
+                return response()->json([
+                    'message' => 'Sách này đã tồn tại trong hệ thống (trùng mã ISBN).',
+                ], 422);
+            }
+
+            return response()->json([
+                'message' => 'Không thể thêm sách tự động do lỗi dữ liệu từ Google Books. Vui lòng thêm sách thủ công.',
+            ], 422);
+        }
 
         return response()->json(Book::with(['authors', 'categories', 'publisher', 'bookCopies'])->find($book->book_id));
     }
@@ -180,7 +193,7 @@ class BookController extends Controller
 
     public function store(Request $request)
     {
-        $validated = $request->validate([
+        $validator = Validator::make($request->all(), [
             'title' => ['required', 'string', 'max:255'],
             'isbn' => ['required', 'string', 'max:20', 'unique:books,isbn'],
             'publisher_id' => ['required', 'exists:publishers,publisher_id'],
@@ -202,7 +215,19 @@ class BookController extends Controller
             'create_first_copy' => ['sometimes', 'boolean'],
             'barcode' => ['nullable', 'string', 'max:64', 'unique:book_copies,barcode'],
             'shelf_location' => ['nullable', 'string', 'max:100'],
+        ], [
+            'isbn.unique' => 'Sách này đã tồn tại trong hệ thống (trùng mã ISBN).',
+            'barcode.unique' => 'Mã vạch này đã tồn tại trong hệ thống.',
         ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'message' => $validator->errors()->first(),
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $validated = $validator->validated();
 
         // Authors are submitted as names (existing or brand new) — resolve to IDs before
         // touching the disk/DB so an unrecognized author name fails fast.
@@ -296,7 +321,7 @@ class BookController extends Controller
     {
         $book = Book::with(['authors', 'categories'])->findOrFail($id);
 
-        $validated = $request->validate([
+        $validator = Validator::make($request->all(), [
             'title' => ['sometimes', 'required', 'string', 'max:255'],
             'isbn' => [
                 'sometimes',
@@ -324,7 +349,18 @@ class BookController extends Controller
             'categories.*' => ['integer', 'exists:categories,category_id'],
             'edited_by' => ['nullable', 'exists:users,user_id'],
             'edit_reason' => ['nullable', 'string'],
+        ], [
+            'isbn.unique' => 'Sách này đã tồn tại trong hệ thống (trùng mã ISBN).',
         ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'message' => $validator->errors()->first(),
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $validated = $validator->validated();
 
         $editedBy = $request->user()?->getAuthIdentifier() ?? $request->input('edited_by');
         if (!$editedBy) {

@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use Illuminate\Http\Request;
 use App\Http\Controllers\Controller;
 use App\Models\BookCopy;
+use Illuminate\Support\Facades\Validator;
  
 class BookCopyController extends Controller
 {
@@ -78,15 +79,26 @@ class BookCopyController extends Controller
      */
     public function store(Request $request)
     {
-        $validated = $request->validate([
+        $validator = Validator::make($request->all(), [
             'book_id' => 'required|exists:books,book_id',
             'barcode' => 'required|string|unique:book_copies,barcode',
             'shelf_location' => 'nullable|string',
             'condition' => 'required|string|in:new,good,old,light,heavy',
             'status' => 'required|string|in:available,borrowed,reserved,maintenance,lost,liquidated',
             'acquisition_date' => 'required|date',
+        ], [
+            'barcode.unique' => 'Mã vạch này đã tồn tại trong hệ thống.',
         ]);
- 
+
+        if ($validator->fails()) {
+            return response()->json([
+                'message' => $validator->errors()->first(),
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $validated = $validator->validated();
+
         $copy = BookCopy::create([
             'book_id' => $validated['book_id'],
             'barcode' => $validated['barcode'],
@@ -107,14 +119,25 @@ class BookCopyController extends Controller
      */
     public function update(Request $request, string $id)
     {
-        $validated = $request->validate([
+        $validator = Validator::make($request->all(), [
             'barcode' => 'required|string|unique:book_copies,barcode,' . $id . ',copy_id',
             'shelf_location' => 'nullable|string',
             'condition' => 'required|string|in:new,good,old,light,heavy',
             'status' => 'required|string|in:available,borrowed,reserved,maintenance,lost,liquidated',
             'acquisition_date' => 'required|date',
+        ], [
+            'barcode.unique' => 'Mã vạch này đã tồn tại trong hệ thống.',
         ]);
- 
+
+        if ($validator->fails()) {
+            return response()->json([
+                'message' => $validator->errors()->first(),
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $validated = $validator->validated();
+
         $copy = BookCopy::findOrFail($id);
         $copy->update([
             'barcode' => $validated['barcode'],

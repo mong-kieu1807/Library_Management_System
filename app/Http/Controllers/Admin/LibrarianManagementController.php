@@ -95,11 +95,13 @@ class LibrarianManagementController extends Controller
             'phone' => 'nullable|string|max:20',
             'address' => 'nullable|string|max:255',
             'avatar' => 'nullable|string|max:255',
+        ], [
+            'email.unique' => 'Thủ thư này đã tồn tại (email đã được sử dụng).',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
-                'message' => 'Dữ liệu đầu vào không hợp lệ.',
+                'message' => $validator->errors()->first(),
                 'errors' => $validator->errors()
             ], 422);
         }
@@ -172,11 +174,13 @@ class LibrarianManagementController extends Controller
             'address' => 'nullable|string|max:255',
             'avatar' => 'nullable|string|max:255',
             'status' => 'integer|in:0,1',
+        ], [
+            'email.unique' => 'Email này đã được sử dụng bởi thủ thư khác.',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
-                'message' => 'Dữ liệu cập nhật không hợp lệ.',
+                'message' => $validator->errors()->first(),
                 'errors' => $validator->errors()
             ], 422);
         }
