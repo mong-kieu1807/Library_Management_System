@@ -5,13 +5,20 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use App\Models\Role;
+use App\Services\ActivityLogService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\DB;
+use Carbon\Carbon;
 use Exception;
 
 class UserController extends Controller
 {
+    public function __construct(private ActivityLogService $activityLogService)
+    {
+    }
+
     /**
      * Map a User model to the front-end IDetailUser/IListUser structure.
      */
@@ -38,6 +45,9 @@ class UserController extends Controller
             ];
         }
 
+        $card = $user->libraryCard;
+        $cardNumber = $card ? $card->card_number : '—';
+
         return [
             'id' => (string)$user->user_id,
             'name' => $user->full_name,
@@ -46,6 +56,7 @@ class UserController extends Controller
             'phone' => $user->phone,
             'avatar' => $user->avatar_url,
             'address' => $user->address,
+            'card_number' => $cardNumber,
             'status' => [
                 'value' => (string)$user->status,
                 'label' => $user->status === 1 ? 'Active' : 'Inactive',
@@ -74,7 +85,9 @@ class UserController extends Controller
             $sortBy = 'full_name';
         }
 
-        $query = User::with('role');
+        $query = User::with(['role', 'libraryCard'])->whereHas('role', function ($q) {
+            $q->where('role_name', 'reader');
+        });
 
         if ($keyword) {
             $query->where(function($q) use ($keyword) {
@@ -151,16 +164,44 @@ class UserController extends Controller
             $statusValue = (int)($request->input('status.value', 1));
         }
 
-        $user = User::create([
-            'role_id' => $role ? $role->role_id : 3, // Fallback to 3 if not found
-            'email' => $request->input('email'),
-            'password' => Hash::make($request->input('password')),
-            'full_name' => $request->input('name'),
-            'phone' => $request->input('phone'),
-            'address' => $request->input('address'),
-            'status' => $statusValue,
-            'avatar_url' => $request->input('avatar'),
-        ]);
+        $user = DB::transaction(function () use ($request, $role, $statusValue) {
+            $user = User::create([
+                'role_id' => $role ? $role->role_id : 3, // Fallback to 3 if not found
+                'email' => $request->input('email'),
+                'password' => Hash::make($request->input('password')),
+                'full_name' => $request->input('name'),
+                'phone' => $request->input('phone'),
+                'address' => $request->input('address'),
+                'status' => $statusValue,
+                'avatar_url' => $request->input('avatar'),
+            ]);
+
+            // Create library card if the created user is a reader
+            $roleName = $role ? $role->role_name : 'reader';
+            if ($roleName === 'reader') {
+                // [HOTFIX] TiDB: card_id không auto-increment — tự sinh ID
+                $nextCardId = (int) (DB::table('library_cards')->lockForUpdate()->max('card_id') ?? 0) + 1;
+                \Illuminate\Support\Facades\Log::debug('[LibraryCard Hotfix - Admin] Generated card_id = ' . $nextCardId);
+
+                $cardDefaults = DB::table('system_settings')
+                    ->whereIn('config_key', ['card_regular_borrow_limit', 'card_regular_max_days'])
+                    ->pluck('config_value', 'config_key');
+
+                DB::table('library_cards')->insert([
+                    'card_id'         => $nextCardId,
+                    'user_id'         => $user->user_id,
+                    'card_number'     => 'TV' . str_pad($user->user_id, 4, '0', STR_PAD_LEFT),
+                    'issue_date'      => Carbon::today(),
+                    'expiry_date'     => Carbon::today()->addYear(),
+                    'borrow_limit'    => (int) ($cardDefaults['card_regular_borrow_limit'] ?? 5),
+                    'max_borrow_days' => (int) ($cardDefaults['card_regular_max_days'] ?? 14),
+                    'card_type'       => 'regular',
+                    'status'          => 1,
+                ]);
+            }
+
+            return $user;
+        });
 
         return response()->json([
             'code' => 200,
@@ -175,7 +216,9 @@ class UserController extends Controller
      */
     public function show($id)
     {
-        $user = User::with('role')->find($id);
+        $user = User::with(['role', 'libraryCard'])->whereHas('role', function ($q) {
+            $q->where('role_name', 'reader');
+        })->find($id);
 
         if (!$user) {
             return response()->json([
@@ -196,7 +239,9 @@ class UserController extends Controller
      */
     public function update(Request $request, $id)
     {
-        $user = User::find($id);
+        $user = User::whereHas('role', function ($q) {
+            $q->where('role_name', 'reader');
+        })->find($id);
 
         if (!$user) {
             return response()->json([
@@ -220,6 +265,9 @@ class UserController extends Controller
                 'errors' => $validator->errors()
             ], 422);
         }
+
+        // Chụp lại status trước khi sửa để phát hiện khóa/mở khóa cho audit log bên dưới.
+        $oldStatus = (int) $user->status;
 
         // Cập nhật các trường
         if ($request->has('name')) {
@@ -262,6 +310,16 @@ class UserController extends Controller
 
         $user->save();
 
+        // Module 7 — Activity Log: chỉ log khi status thực sự đổi (khóa/mở khóa),
+        // không log các lần sửa trường khác không đụng tới status.
+        if ($request->has('status')) {
+            $lockAudit = self::buildLockAuditPayload($oldStatus, (int) $user->status);
+            if ($lockAudit !== null) {
+                $method = $lockAudit['action'] === 'lock' ? 'userLocked' : 'userUnlocked';
+                $this->activityLogService->{$method}(auth()->id(), $user->user_id, $lockAudit['old_data'], $lockAudit['new_data'], $request->ip());
+            }
+        }
+
         return response()->json([
             'code' => 200,
             'results' => [
@@ -271,11 +329,35 @@ class UserController extends Controller
     }
 
     /**
+     * So sánh status trước/sau để suy ra khóa hay mở khóa tài khoản, cùng payload
+     * before/after cho audit log. Tách riêng để test được mà không cần DB.
+     * Trả về null khi status không đổi (không cần ghi log).
+     *
+     * @return array{action: 'lock'|'unlock', old_data: array{status:string}, new_data: array{status:string}}|null
+     */
+    private static function buildLockAuditPayload(int $oldStatus, int $newStatus): ?array
+    {
+        if ($oldStatus === $newStatus) {
+            return null;
+        }
+
+        $label = fn (int $status) => $status === 1 ? 'active' : 'locked';
+
+        return [
+            'action'   => $newStatus === 0 ? 'lock' : 'unlock',
+            'old_data' => ['status' => $label($oldStatus)],
+            'new_data' => ['status' => $label($newStatus)],
+        ];
+    }
+
+    /**
      * Remove the specified user from storage.
      */
     public function destroy($id)
     {
-        $user = User::find($id);
+        $user = User::whereHas('role', function ($q) {
+            $q->where('role_name', 'reader');
+        })->find($id);
 
         if (!$user) {
             return response()->json([
@@ -296,7 +378,9 @@ class UserController extends Controller
      */
     public function resetPassword(Request $request, $id)
     {
-        $user = User::find($id);
+        $user = User::whereHas('role', function ($q) {
+            $q->where('role_name', 'reader');
+        })->find($id);
 
         if (!$user) {
             return response()->json([

@@ -42,6 +42,7 @@ Route::prefix('v1/auth')->group(function () {
     Route::get('/google/callback', [GoogleAuthController::class, 'callback']);
     Route::get('/verify-email',         [AuthController::class, 'verifyEmail']);
     Route::post('/resend-verification', [AuthController::class, 'resendVerification']);
+    Route::post('/verify-registration-otp', [AuthController::class, 'verifyRegistrationOtp']);
 });
 
 Route::post('v1/ai/chat', [AIController::class, 'chat']);
@@ -76,6 +77,8 @@ Route::get('private/v1/reports/export/transactions-csv',   [ExportController::cl
 Route::get('private/v1/reports/export/top-books-csv',      [ExportController::class, 'topBooksCsv']);
 Route::get('private/v1/reports/export/top-authors-csv',    [ExportController::class, 'topAuthorsCsv']);
 Route::get('private/v1/reports/export/top-categories-csv', [ExportController::class, 'topCategoriesCsv']);
+Route::get('private/v1/reports/export/today-pdf',            [ExportController::class, 'todayReportPdf']);
+Route::get('private/v1/reports/export/today-csv',            [ExportController::class, 'todayReportCsv']);
 
 Route::middleware(['auth:sanctum', 'role:admin,librarian'])->group(function () {
     Route::post('v1/books', [AdminBookController::class, 'store']);
@@ -175,6 +178,9 @@ Route::middleware(['auth:sanctum', 'role:admin,librarian'])->prefix('private/v1'
     Route::get('/readers', [App\Http\Controllers\Admin\ReaderManagementController::class, 'index']);
     Route::get('/readers/{id}/borrow-history', [App\Http\Controllers\Admin\ReaderManagementController::class, 'borrowHistory']);
 
+    // "🤖 AI Gợi Ý Sách" — chat assistant cho thủ thư (nhớ ngữ cảnh qua conversation_id)
+    Route::post('/ai-assistant/chat', [App\Http\Controllers\Admin\AiAssistantController::class, 'chat']);
+
     // Access Audit Logs (Login Logs) for both admin and librarians
     Route::get('/login-logs', [App\Http\Controllers\Admin\LoginLogController::class, 'index']);
 
@@ -249,6 +255,7 @@ Route::middleware(['auth:sanctum', 'role:admin,librarian'])->prefix('private/v1/
     Route::get('/top-categories',        [ReportController::class, 'topCategories']);          // Phase 2 (categories)
     Route::get('/fine-revenue',          [ReportController::class, 'fineRevenue']);            // Phase 4 (fine)
     Route::get('/fine-reasons',          [ReportController::class, 'fineReasons']);            // Phase 4 (fine)
+    Route::get('/today',                 [ReportController::class, 'todayReport']);
 });
 
 // Library Card Renewal — Admin (M1.6)

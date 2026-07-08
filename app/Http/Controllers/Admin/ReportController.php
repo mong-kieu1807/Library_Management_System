@@ -518,4 +518,18 @@ class ReportController extends Controller
             'results' => ['objects' => $items],
         ]);
     }
+
+    /**
+     * GET /api/private/v1/reports/today
+     * Trả về báo cáo chi tiết ngày hôm nay.
+     */
+    public function todayReport(Request $request): JsonResponse
+    {
+        $report = $this->reportService->getTodayReport();
+
+        return response()->json([
+            'code'    => 200,
+            'results' => ['object' => $report],
+        ]);
+    }
 }

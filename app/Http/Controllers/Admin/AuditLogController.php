@@ -23,6 +23,8 @@ class AuditLogController extends Controller
     {
         $logs = $this->activityLogService->paginate([
             'user_id'    => $request->input('user'),
+            'keyword'    => $request->input('keyword'),
+            'module'     => $request->input('module'),
             'action'     => $request->input('action'),
             'table_name' => $request->input('table'),
             'from'       => $request->input('from'),

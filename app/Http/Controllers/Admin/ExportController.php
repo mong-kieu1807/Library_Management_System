@@ -717,6 +717,119 @@ class ExportController extends Controller
         }, 200, $headers);
     }
 
+    /**
+     * GET /private/v1/reports/export/today-pdf
+     * Xuất PDF báo cáo hoạt động ngày hôm nay.
+     */
+    public function todayReportPdf(Request $request): \Illuminate\Http\Response
+    {
+        $report = $this->reportService->getTodayReport();
+        $data = [
+            'summary' => $report['summary'],
+            'details' => $report['details'],
+            'today'   => Carbon::today()->format('d/m/Y'),
+        ];
+
+        $pdf = Pdf::loadView('reports.today_pdf', $data);
+        $pdf->setOptions($this->dompdfOptions());
+
+        return $this->wrapPdfAsHtml(
+            $pdf->output(),
+            'Bao-cao-hoat-dong-hom-nay-' . now()->format('Ymd')
+        );
+    }
+
+    /**
+     * GET /private/v1/reports/export/today-csv
+     * Xuất CSV/Excel báo cáo hoạt động ngày hôm nay.
+     */
+    public function todayReportCsv(Request $request): \Symfony\Component\HttpFoundation\StreamedResponse
+    {
+        $report = $this->reportService->getTodayReport();
+        $summary = $report['summary'];
+        $details = $report['details'];
+
+        $filename = 'bao-cao-hoat-dong-hom-nay-' . now()->format('Ymd') . '.csv';
+        $headers  = [
+            'Content-Type'        => 'text/csv; charset=UTF-8',
+            'Content-Disposition' => "attachment; filename=\"{$filename}\"",
+            'Pragma'              => 'no-cache',
+            'Cache-Control'       => 'must-revalidate, post-check=0, pre-check=0',
+            'Expires'             => '0',
+        ];
+
+        return response()->stream(function () use ($summary, $details) {
+            $file = fopen('php://output', 'w');
+            fprintf($file, chr(0xEF) . chr(0xBB) . chr(0xBF));   // UTF-8 BOM
+
+            // 1. Title
+            fputcsv($file, ['BÁO CÁO HOẠT ĐỘNG NGÀY HÔM NAY (' . now()->format('d/m/Y') . ')']);
+            fputcsv($file, []);
+
+            // 2. Summary
+            fputcsv($file, ['TỔNG HỢP']);
+            fputcsv($file, ['Lượt mượn', 'Lượt trả', 'Đặt trước']);
+            fputcsv($file, [$summary['total_borrows'], $summary['total_returns'], $summary['total_reservations']]);
+            fputcsv($file, []);
+
+            // 3. Details: Borrows
+            fputcsv($file, ['CHI TIẾT LƯỢT MƯỢN HÔM NAY']);
+            fputcsv($file, ['Mã phiếu', 'Độc giả', 'Email độc giả', 'Thẻ thư viện', 'Sách mượn', 'Hạn trả', 'Trạng thái']);
+            foreach ($details['borrows'] as $r) {
+                fputcsv($file, [
+                    '#' . $r['borrow_id'],
+                    $r['reader_name'],
+                    $r['reader_email'],
+                    $r['card_number'] ?? '—',
+                    $r['books'] ?? '—',
+                    Carbon::parse($r['due_date'])->format('d/m/Y'),
+                    $r['status'] === 'borrowing' ? 'Đang mượn' : 'Đã trả',
+                ]);
+            }
+            fputcsv($file, []);
+
+            // 4. Details: Returns
+            fputcsv($file, ['CHI TIẾT LƯỢT TRẢ HÔM NAY']);
+            fputcsv($file, ['Mã phiếu', 'Độc giả', 'Email độc giả', 'Tên sách', 'Giờ trả', 'Tiền phạt']);
+            foreach ($details['returns'] as $r) {
+                fputcsv($file, [
+                    '#' . $r['borrow_id'],
+                    $r['reader_name'],
+                    $r['reader_email'],
+                    $r['book_title'],
+                    Carbon::parse($r['return_date'])->format('H:i'),
+                    $r['fine_amount'] > 0 ? $r['fine_amount'] . 'đ' : '—',
+                ]);
+            }
+            fputcsv($file, []);
+
+            // 5. Details: Reservations
+            fputcsv($file, ['CHI TIẾT ĐẶT TRƯỚC HÔM NAY']);
+            fputcsv($file, ['Mã đặt trước', 'Độc giả', 'Email độc giả', 'Tên sách', 'Giờ đặt', 'Hàng chờ', 'Trạng thái']);
+            foreach ($details['reservations'] as $r) {
+                $statusLabel = match($r['status']) {
+                    'waiting' => 'Đang chờ',
+                    'ready' => 'Sẵn sàng',
+                    'completed' => 'Đã nhận',
+                    'cancelled' => 'Đã hủy',
+                    'expired' => 'Hết hạn',
+                    default => $r['status']
+                };
+                fputcsv($file, [
+                    '#' . $r['reservation_id'],
+                    $r['reader_name'],
+                    $r['reader_email'],
+                    $r['book_title'],
+                    Carbon::parse($r['created_at'])->format('H:i'),
+                    $r['queue_position'],
+                    $statusLabel,
+                ]);
+            }
+
+            fclose($file);
+        }, 200, $headers);
+    }
+
     // ── Private helpers (cùng pattern với ReceiptService) ────────────────────
 
     /**

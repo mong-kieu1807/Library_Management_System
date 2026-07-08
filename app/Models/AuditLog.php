@@ -26,10 +26,12 @@ class AuditLog extends Model
     'audit_id',
     'actor_id',
     'action',
+    'module',
     'table_name',
     'record_id',
     'old_data',
     'new_data',
+    'description',
     'ip_address',
     'created_at'
     ];
