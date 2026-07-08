@@ -100,16 +100,20 @@ class ReceiptService
                 'bc.barcode',
                 'b.title',
                 'bd.return_date',
+                'bd.renewed_due_date',
                 DB::raw('COALESCE(f.amount, 0) AS fine_amount'),
                 DB::raw('f.fine_id'),
             ])
             ->get();
 
         // [3] Overdue days per book + latest return date
-        $due              = Carbon::parse($borrow->due_date)->startOfDay();
+        // Mỗi sách dùng hạn trả hiệu lực riêng (renewed_due_date nếu đã gia hạn),
+        // vì borrow->due_date là hạn gốc dùng chung cho cả giao dịch.
+        $fallbackDue      = Carbon::parse($borrow->due_date)->startOfDay();
         $latestReturnDate = null; // giữ là Carbon instance để tránh parse lại chuỗi d/m/Y
 
-        $returnedBooks->each(function ($book) use ($due, &$latestReturnDate) {
+        $returnedBooks->each(function ($book) use ($fallbackDue, &$latestReturnDate) {
+            $due                = $book->renewed_due_date ? Carbon::parse($book->renewed_due_date)->startOfDay() : $fallbackDue;
             $retDate            = Carbon::parse($book->return_date)->startOfDay();
             $book->overdue_days = $retDate->gt($due) ? (int) $retDate->diffInDays($due, true) : 0;
             $book->fine_amount  = (int) ($book->fine_amount ?? 0);

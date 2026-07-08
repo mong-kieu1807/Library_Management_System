@@ -41,19 +41,20 @@ class HistoryController extends Controller
             ->whereIn('bt.status', ['borrowing', 'overdue'])
             ->select([
                 'bt.borrow_id', 'bt.borrow_date', 'bt.due_date', 'bt.status',
-                'bd.copy_id', 'bd.renew_count',
+                'bd.copy_id', 'bd.renew_count', 'bd.renewed_due_date',
                 'bc.barcode',
                 'b.book_id', 'b.title', 'b.cover_image',
             ])
             ->orderByDesc('bt.borrow_id')
             ->get()
             ->map(function ($row) use ($today) {
-                $dueDate     = Carbon::parse($row->due_date)->startOfDay();
+                $effectiveDue = $row->renewed_due_date ?? $row->due_date;
+                $dueDate     = Carbon::parse($effectiveDue)->startOfDay();
                 $overdueDays = $today->gt($dueDate) ? (int) $today->diffInDays($dueDate, true) : 0;
                 return [
                     'borrow_id'    => $row->borrow_id,
                     'borrow_date'  => $row->borrow_date,
-                    'due_date'     => $row->due_date,
+                    'due_date'     => $effectiveDue,
                     'status'       => $row->status,
                     'copy_id'      => $row->copy_id,
                     'barcode'      => $row->barcode,
@@ -81,7 +82,7 @@ class HistoryController extends Controller
             ->where('bt.user_id', $userId)
             ->select([
                 'bt.borrow_id', 'bt.borrow_date', 'bt.due_date',
-                'bd.copy_id', 'bd.return_date', 'bd.condition_return', 'bd.renew_count',
+                'bd.copy_id', 'bd.return_date', 'bd.condition_return', 'bd.renew_count', 'bd.renewed_due_date',
                 'bc.barcode',
                 'b.book_id', 'b.title',
                 DB::raw('f.amount AS fine_amount'),
@@ -90,13 +91,14 @@ class HistoryController extends Controller
             ->orderByDesc('bd.return_date')
             ->get()
             ->map(function ($row) {
-                $dueDate     = Carbon::parse($row->due_date)->startOfDay();
+                $effectiveDue = $row->renewed_due_date ?? $row->due_date;
+                $dueDate     = Carbon::parse($effectiveDue)->startOfDay();
                 $retDate     = Carbon::parse($row->return_date)->startOfDay();
                 $overdueDays = $retDate->gt($dueDate) ? (int) $retDate->diffInDays($dueDate, true) : 0;
                 return [
                     'borrow_id'       => $row->borrow_id,
                     'borrow_date'     => $row->borrow_date,
-                    'due_date'        => $row->due_date,
+                    'due_date'        => $effectiveDue,
                     'return_date'     => $row->return_date,
                     'copy_id'         => $row->copy_id,
                     'barcode'         => $row->barcode,
@@ -208,7 +210,7 @@ class HistoryController extends Controller
             })
             ->select([
                 'bt.borrow_id', 'bd.copy_id',
-                'bd.return_date', 'bd.renew_count',
+                'bd.return_date', 'bd.renew_count', 'bd.renewed_due_date',
                 'bt.borrow_date', 'bt.due_date',
                 'b.title',
                 'reader.full_name as reader_name',
@@ -250,7 +252,7 @@ class HistoryController extends Controller
             ->get();
 
         $items = $rows->map(function ($row) use ($today) {
-            $due = Carbon::parse($row->due_date)->startOfDay();
+            $due = Carbon::parse($row->renewed_due_date ?? $row->due_date)->startOfDay();
 
             if (!is_null($row->return_date)) {
                 $eventType = 'return';

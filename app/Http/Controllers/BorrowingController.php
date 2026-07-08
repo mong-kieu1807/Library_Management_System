@@ -33,20 +33,25 @@ class BorrowingController extends Controller
                 'b.title',
                 'b.cover_image',
                 DB::raw("DATE_FORMAT(bt.borrow_date, '%Y-%m-%d') as borrow_date"),
-                DB::raw("DATE_FORMAT(bt.due_date, '%Y-%m-%d') as due_date"),
-                DB::raw('DATEDIFF(bt.due_date, CURDATE()) as days_remaining'),
+                // renewed_due_date: hạn trả riêng của bản sao này sau khi được gia hạn.
+                DB::raw("DATE_FORMAT(COALESCE(bd.renewed_due_date, bt.due_date), '%Y-%m-%d') as due_date"),
+                DB::raw('DATEDIFF(COALESCE(bd.renewed_due_date, bt.due_date), CURDATE()) as days_remaining'),
             ])
-            ->orderBy('bt.due_date', 'asc')
+            ->orderBy(DB::raw('COALESCE(bd.renewed_due_date, bt.due_date)'), 'asc')
             ->get();
 
-        // Lấy borrow_id nào đang có pending renewal request
-        $pendingBorrowIds = DB::table('borrow_renewal_requests')
+        // Lấy đúng copy_id nào đang có pending renewal request (không phải cả borrow_id).
+        // copy_id NULL = request cũ trước khi có cột này -> fallback áp dụng cho cả giao dịch.
+        $pendingRequests = DB::table('borrow_renewal_requests')
             ->where('user_id', $userId)
             ->where('status', 'pending')
-            ->pluck('borrow_id')
-            ->toArray();
+            ->select('borrow_id', 'copy_id')
+            ->get();
 
-        $data = $rows->map(function ($row) use ($pendingBorrowIds) {
+        $pendingCopyIds        = $pendingRequests->whereNotNull('copy_id')->pluck('copy_id')->all();
+        $pendingBorrowIdsLegacy = $pendingRequests->whereNull('copy_id')->pluck('borrow_id')->all();
+
+        $data = $rows->map(function ($row) use ($pendingCopyIds, $pendingBorrowIdsLegacy) {
             $days = (int) $row->days_remaining;
 
             if ($days > 3) {
@@ -67,7 +72,8 @@ class BorrowingController extends Controller
                 'due_date'         => $row->due_date,
                 'days_remaining'   => $days,
                 'warning_color'    => $color,
-                'renewal_pending'  => in_array($row->borrow_id, $pendingBorrowIds),
+                'renewal_pending'  => in_array($row->copy_id, $pendingCopyIds)
+                    || in_array($row->borrow_id, $pendingBorrowIdsLegacy),
             ];
         });
 
@@ -97,10 +103,10 @@ class BorrowingController extends Controller
                 'b.title',
                 'b.cover_image',
                 DB::raw("DATE_FORMAT(bt.borrow_date, '%Y-%m-%d') as borrow_date"),
-                DB::raw("DATE_FORMAT(bt.due_date,    '%Y-%m-%d') as due_date"),
+                DB::raw("DATE_FORMAT(COALESCE(bd.renewed_due_date, bt.due_date), '%Y-%m-%d') as due_date"),
                 DB::raw("DATE_FORMAT(bd.return_date, '%Y-%m-%d') as return_date"),
                 'bd.renew_count',
-                DB::raw("GREATEST(0, DATEDIFF(bd.return_date, bt.due_date)) as days_late"),
+                DB::raw("GREATEST(0, DATEDIFF(bd.return_date, COALESCE(bd.renewed_due_date, bt.due_date))) as days_late"),
             ])
             ->orderByDesc('bt.borrow_date')
             ->get();
@@ -130,20 +136,25 @@ class BorrowingController extends Controller
     /**
      * POST /v1/me/borrowing/{borrowId}/renew
      *
-     * M4.2: Reader gửi yêu cầu gia hạn sách (pending).
+     * M4.2: Reader gửi yêu cầu gia hạn sách (pending) cho đúng 1 bản sao.
      * Admin sẽ duyệt qua POST /private/v1/checkout/renew.
      *
      * Validation:
      *  - Giao dịch thuộc về user
-     *  - Còn sách chưa trả
+     *  - copy_id thuộc đúng giao dịch và chưa trả
      *  - Chưa quá hạn
-     *  - Còn lượt gia hạn (max_renew_times từ system_settings)
+     *  - Còn lượt gia hạn (max_renew_times từ system_settings), tính theo đúng bản sao
      *  - Không có người khác đặt trước
-     *  - Chưa có pending request
+     *  - Chưa có pending request cho đúng bản sao này
      */
     public function renew(Request $request, int $borrowId)
     {
         $userId = auth()->id();
+
+        $validated = $request->validate([
+            'copy_id' => ['required', 'integer', 'min:1'],
+        ]);
+        $copyId = (int) $validated['copy_id'];
 
         // 1. Verify giao dịch thuộc về user
         $transaction = DB::table('borrow_transactions')
@@ -155,44 +166,37 @@ class BorrowingController extends Controller
             return response()->json(['message' => 'Không tìm thấy giao dịch mượn.'], 404);
         }
 
-        // 2. Còn sách chưa trả
-        $hasUnreturned = DB::table('borrow_details')
+        // 2. Bản sao thuộc đúng giao dịch và chưa trả — chỉ xử lý đúng bản ghi được yêu cầu.
+        $detail = DB::table('borrow_details')
             ->where('borrow_id', $borrowId)
+            ->where('copy_id', $copyId)
             ->whereNull('return_date')
-            ->exists();
+            ->first();
 
-        if (!$hasUnreturned) {
-            return response()->json(['message' => 'Giao dịch này không còn sách đang mượn để gia hạn.'], 422);
+        if (!$detail) {
+            return response()->json(['message' => 'Không tìm thấy sách đang mượn để gia hạn.'], 422);
         }
 
-        // 3. Không gia hạn nếu đã quá hạn
-        if (date('Y-m-d') > $transaction->due_date) {
+        // 3. Không gia hạn nếu đã quá hạn (dùng hạn trả hiệu lực của đúng bản sao này)
+        $effectiveDueDate = $detail->renewed_due_date ?? $transaction->due_date;
+        if (date('Y-m-d') > $effectiveDueDate) {
             return response()->json(['message' => 'Không thể gia hạn sách đã quá hạn.'], 422);
         }
 
-        // 4. Kiểm tra giới hạn gia hạn (lấy từ borrow_details)
+        // 4. Kiểm tra giới hạn gia hạn của đúng bản sao này
         $maxRenewTimes = (int) DB::table('system_settings')
             ->where('config_key', 'max_renew_times')
             ->value('config_value') ?: 2;
 
-        $maxRenewCount = DB::table('borrow_details')
-            ->where('borrow_id', $borrowId)
-            ->whereNull('return_date')
-            ->max('renew_count');
-
-        if ((int) $maxRenewCount >= $maxRenewTimes) {
+        if ((int) $detail->renew_count >= $maxRenewTimes) {
             return response()->json(['message' => 'Bạn đã sử dụng hết số lần gia hạn.'], 422);
         }
 
-        // 5. Kiểm tra reservation của người khác
-        $bookIds = DB::table('borrow_details as bd')
-            ->join('book_copies as bc', 'bc.copy_id', '=', 'bd.copy_id')
-            ->where('bd.borrow_id', $borrowId)
-            ->whereNull('bd.return_date')
-            ->pluck('bc.book_id');
+        // 5. Kiểm tra reservation của người khác — chỉ cho đúng sách (book_id) của bản sao này
+        $bookId = DB::table('book_copies')->where('copy_id', $copyId)->value('book_id');
 
         $hasReservation = DB::table('reservations')
-            ->whereIn('book_id', $bookIds)
+            ->where('book_id', $bookId)
             ->whereIn('status', ['waiting', 'ready'])
             ->where('user_id', '<>', $userId)
             ->exists();
@@ -201,9 +205,10 @@ class BorrowingController extends Controller
             return response()->json(['message' => 'Sách hiện đã có độc giả khác đặt trước.'], 422);
         }
 
-        // 6. Kiểm tra đã có pending request chưa
+        // 6. Kiểm tra đã có pending request cho đúng bản sao này chưa
         $hasPending = DB::table('borrow_renewal_requests')
             ->where('borrow_id', $borrowId)
+            ->where('copy_id', $copyId)
             ->where('user_id', $userId)
             ->where('status', 'pending')
             ->exists();
@@ -212,9 +217,10 @@ class BorrowingController extends Controller
             return response()->json(['message' => 'Yêu cầu gia hạn đang chờ thư viện duyệt.'], 422);
         }
 
-        // 7. Tạo pending renewal request
+        // 7. Tạo pending renewal request — chỉ cho đúng cuốn sách được chọn.
         $requestId = DB::table('borrow_renewal_requests')->insertGetId([
             'borrow_id'    => $borrowId,
+            'copy_id'      => $copyId,
             'user_id'      => $userId,
             'status'       => 'pending',
             'requested_at' => now(),
@@ -231,6 +237,7 @@ class BorrowingController extends Controller
      * DELETE /v1/me/borrowing/{borrowId}/renew
      *
      * Reader tự hủy yêu cầu gia hạn sách. Chỉ cho phép hủy ở trạng thái Pending.
+     * Chỉ hủy đúng yêu cầu của bản sao được chọn (copy_id).
      * lockForUpdate + re-check status trong transaction để tránh race với
      * Admin duyệt/từ chối cùng lúc — chỉ một thao tác được thắng.
      */
@@ -238,11 +245,19 @@ class BorrowingController extends Controller
     {
         $userId = auth()->id();
 
+        $validated = $request->validate([
+            'copy_id' => ['required', 'integer', 'min:1'],
+        ]);
+        $copyId = (int) $validated['copy_id'];
+
         try {
-            DB::transaction(function () use ($borrowId, $userId) {
+            DB::transaction(function () use ($borrowId, $copyId, $userId) {
                 $renewRequest = DB::table('borrow_renewal_requests')
                     ->where('borrow_id', $borrowId)
                     ->where('user_id', $userId)
+                    ->where(function ($q) use ($copyId) {
+                        $q->where('copy_id', $copyId)->orWhereNull('copy_id');
+                    })
                     ->orderByDesc('request_id')
                     ->lockForUpdate()
                     ->first();

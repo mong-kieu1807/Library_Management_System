@@ -33,7 +33,7 @@ class FineController extends Controller
                 'b.title',
                 'b.cover_image',
                 DB::raw("DATE_FORMAT(bt.borrow_date, '%Y-%m-%d') as borrow_date"),
-                DB::raw("DATE_FORMAT(bt.due_date,    '%Y-%m-%d') as due_date"),
+                DB::raw("DATE_FORMAT(COALESCE(bd.renewed_due_date, bt.due_date), '%Y-%m-%d') as due_date"),
                 DB::raw("DATE_FORMAT(bd.return_date, '%Y-%m-%d') as return_date"),
                 'f.amount',
                 'f.reason',

@@ -38,7 +38,7 @@ class DashboardController extends Controller
         $overdueCount = (int) DB::table('borrow_transactions as bt')
             ->join('borrow_details as bd', 'bd.borrow_id', '=', 'bt.borrow_id')
             ->whereNull('bd.return_date')
-            ->whereRaw('bt.due_date < CURDATE()')
+            ->whereRaw('COALESCE(bd.renewed_due_date, bt.due_date) < CURDATE()')
             ->count();
 
         $totalBorrowMonth = (int) DB::table('borrow_transactions')
@@ -95,13 +95,13 @@ class DashboardController extends Controller
                 $j->on('f.borrow_id', '=', 'bt.borrow_id')->on('f.copy_id', '=', 'bd.copy_id');
             })
             ->whereNull('bd.return_date')
-            ->whereRaw('bt.due_date < CURDATE()')
+            ->whereRaw('COALESCE(bd.renewed_due_date, bt.due_date) < CURDATE()')
             ->select([
                 'bt.borrow_id',
                 'u.full_name as reader',
                 'b.title as book',
-                DB::raw('DATEDIFF(CURDATE(), bt.due_date) as days'),
-                DB::raw('COALESCE(f.amount, DATEDIFF(CURDATE(), bt.due_date) * (SELECT CAST(config_value AS UNSIGNED) FROM system_settings WHERE config_key="fine_per_day" LIMIT 1)) as fee'),
+                DB::raw('DATEDIFF(CURDATE(), COALESCE(bd.renewed_due_date, bt.due_date)) as days'),
+                DB::raw('COALESCE(f.amount, DATEDIFF(CURDATE(), COALESCE(bd.renewed_due_date, bt.due_date)) * (SELECT CAST(config_value AS UNSIGNED) FROM system_settings WHERE config_key="fine_per_day" LIMIT 1)) as fee'),
             ])
             ->orderByDesc('days')
             ->limit(5)
@@ -187,7 +187,7 @@ class DashboardController extends Controller
             DB::table('borrow_details')->whereNull('return_date')->count(),
             DB::table('borrow_transactions as bt')
                 ->join('borrow_details as bd', 'bd.borrow_id', '=', 'bt.borrow_id')
-                ->whereNull('bd.return_date')->whereRaw('bt.due_date < CURDATE()')
+                ->whereNull('bd.return_date')->whereRaw('COALESCE(bd.renewed_due_date, bt.due_date) < CURDATE()')
                 ->distinct()->count('bt.user_id'),
             DB::table('fines')->where('status', 'unpaid')->sum('amount'),
             DB::table('reservations')->whereIn('status', ['waiting', 'ready'])->count(),
@@ -204,11 +204,11 @@ class DashboardController extends Controller
             ->join('borrow_details as bd', function ($j) {
                 $j->on('bd.borrow_id', '=', 'bt.borrow_id')->whereNull('bd.return_date');
             })
-            ->whereRaw('bt.due_date < CURDATE()')
+            ->whereRaw('COALESCE(bd.renewed_due_date, bt.due_date) < CURDATE()')
             ->selectRaw("
-                SUM(CASE WHEN DATEDIFF(CURDATE(), bt.due_date) BETWEEN 1 AND 3  THEN 1 ELSE 0 END) as light,
-                SUM(CASE WHEN DATEDIFF(CURDATE(), bt.due_date) BETWEEN 4 AND 10 THEN 1 ELSE 0 END) as medium,
-                SUM(CASE WHEN DATEDIFF(CURDATE(), bt.due_date) > 10             THEN 1 ELSE 0 END) as heavy
+                SUM(CASE WHEN DATEDIFF(CURDATE(), COALESCE(bd.renewed_due_date, bt.due_date)) BETWEEN 1 AND 3  THEN 1 ELSE 0 END) as light,
+                SUM(CASE WHEN DATEDIFF(CURDATE(), COALESCE(bd.renewed_due_date, bt.due_date)) BETWEEN 4 AND 10 THEN 1 ELSE 0 END) as medium,
+                SUM(CASE WHEN DATEDIFF(CURDATE(), COALESCE(bd.renewed_due_date, bt.due_date)) > 10             THEN 1 ELSE 0 END) as heavy
             ")
             ->first();
 
@@ -369,10 +369,10 @@ class DashboardController extends Controller
                 $j->on('f.borrow_id', '=', 'bd.borrow_id')->on('f.copy_id', '=', 'bd.copy_id');
             })
             ->whereNull('bd.return_date')
-            ->whereRaw('bt.due_date < CURDATE()')
+            ->whereRaw('COALESCE(bd.renewed_due_date, bt.due_date) < CURDATE()')
             ->select([
                 'bt.borrow_id',
-                'bt.due_date',
+                DB::raw('COALESCE(bd.renewed_due_date, bt.due_date) as due_date'),
                 'u.user_id',
                 'u.full_name',
                 'u.email',
@@ -380,7 +380,7 @@ class DashboardController extends Controller
                 'bc.barcode',
                 'b.book_id',
                 'b.title',
-                DB::raw('DATEDIFF(CURDATE(), bt.due_date) as overdue_days'),
+                DB::raw('DATEDIFF(CURDATE(), COALESCE(bd.renewed_due_date, bt.due_date)) as overdue_days'),
                 DB::raw('COALESCE(f.amount, 0) as fine_amount'),
                 DB::raw('COALESCE(f.status, "none") as fine_status'),
             ])

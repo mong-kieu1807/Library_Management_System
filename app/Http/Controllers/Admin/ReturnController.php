@@ -58,7 +58,7 @@ class ReturnController extends Controller
                     JOIN borrow_transactions bt ON bt.borrow_id = bd.borrow_id
                     WHERE bt.user_id = u.user_id
                       AND bd.return_date IS NULL
-                      AND bt.due_date < CURDATE()
+                      AND COALESCE(bd.renewed_due_date, bt.due_date) < CURDATE()
                     LIMIT 1
                 ) AS has_overdue'),
             ])
@@ -119,7 +119,7 @@ class ReturnController extends Controller
                     ->join('borrow_transactions as bt', 'bt.borrow_id', '=', 'bd.borrow_id')
                     ->whereIn('bd.copy_id', $copyIds)
                     ->whereNull('bd.return_date')
-                    ->select('bd.copy_id', 'bd.borrow_id', 'bt.user_id', 'bt.due_date')
+                    ->select('bd.copy_id', 'bd.borrow_id', 'bd.renewed_due_date', 'bt.user_id', 'bt.due_date')
                     ->lockForUpdate()
                     ->get();
 
@@ -157,7 +157,7 @@ class ReturnController extends Controller
                 // [6] UPDATE borrow_transactions status
                 $closedTransactions = [];
                 foreach ($borrowGroups as $borrowId => $group) {
-                    $due      = Carbon::parse($group->first()->due_date)->startOfDay();
+                    $due      = Carbon::parse($group->first()->renewed_due_date ?? $group->first()->due_date)->startOfDay();
                     $leftover = (int) ($remainingMap->get($borrowId) ?? 0);
 
                     if ($leftover === 0) {
@@ -188,7 +188,7 @@ class ReturnController extends Controller
                 $fineUpdates  = [];  // [fine_id => new_amount]
 
                 foreach ($details as $detail) {
-                    $overdueDays = $this->calculateOverdueDays($detail->due_date, $today);
+                    $overdueDays = $this->calculateOverdueDays($detail->renewed_due_date ?? $detail->due_date, $today);
                     if ($overdueDays === 0) continue;
 
                     $fineAmt       = $overdueDays * $finePerDay;
@@ -358,6 +358,7 @@ class ReturnController extends Controller
                 'bc.barcode',
                 'b.title',
                 'bd.borrow_id',
+                'bd.renewed_due_date',
                 'bt.due_date',
                 'bt.user_id as borrower_id',
             ])
@@ -392,8 +393,9 @@ class ReturnController extends Controller
             ->where('config_key', 'fine_per_day')
             ->value('config_value');
 
-        $today       = Carbon::today();
-        $overdueDays = $this->calculateOverdueDays($row->due_date, $today);
+        $today          = Carbon::today();
+        $effectiveDue   = $row->renewed_due_date ?? $row->due_date;
+        $overdueDays    = $this->calculateOverdueDays($effectiveDue, $today);
 
         return response()->json([
             'code'    => 200,
@@ -403,7 +405,7 @@ class ReturnController extends Controller
                     'barcode'      => $row->barcode,
                     'title'        => $row->title,
                     'borrow_id'    => $row->borrow_id,
-                    'due_date'     => $row->due_date,
+                    'due_date'     => $effectiveDue,
                     'overdue_days' => $overdueDays,
                     'penalty_fee'  => $overdueDays * $finePerDay,
                 ],
@@ -454,11 +456,12 @@ class ReturnController extends Controller
                 'bt.due_date',
                 'bd.copy_id',
                 'bd.renew_count',
+                'bd.renewed_due_date',
                 'bc.barcode',
                 'bc.book_id',
                 'b.title',
             ])
-            ->orderBy('bt.due_date', 'asc')
+            ->orderBy(DB::raw('COALESCE(bd.renewed_due_date, bt.due_date)'), 'asc')
             ->orderBy('bt.borrow_id', 'asc')
             ->get();
 
@@ -476,8 +479,9 @@ class ReturnController extends Controller
         $today = Carbon::today();
 
         $results = $rows->map(function ($row) use ($finePerDay, $maxRenewTimes, $reservedBookIds, $today) {
-            $overdueDays = $this->calculateOverdueDays($row->due_date, $today);
-            $renewCount  = (int) $row->renew_count;
+            $effectiveDue = $row->renewed_due_date ?? $row->due_date;
+            $overdueDays  = $this->calculateOverdueDays($effectiveDue, $today);
+            $renewCount   = (int) $row->renew_count;
 
             return [
                 'borrow_id'    => $row->borrow_id,
@@ -485,7 +489,7 @@ class ReturnController extends Controller
                 'barcode'      => $row->barcode,
                 'title'        => $row->title,
                 'borrow_date'  => $row->borrow_date,
-                'due_date'     => $row->due_date,
+                'due_date'     => $effectiveDue,
                 'overdue_days' => $overdueDays,
                 'penalty_fee'  => $overdueDays * $finePerDay,
                 'renew_count'  => $renewCount,
