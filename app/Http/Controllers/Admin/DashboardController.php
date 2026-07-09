@@ -61,7 +61,7 @@ class DashboardController extends Controller
             ->selectRaw("status, COUNT(*) as cnt")
             ->groupBy('status')
             ->pluck('cnt', 'status');
-        $reserved   = DB::table('reservations')->whereIn('status', ['waiting', 'ready'])->count();
+        $reserved   = DB::table('reservations')->whereIn('status', ['pending', 'ready_for_pickup'])->count();
 
         $inventoryData = [
             ['name' => 'Có sẵn',      'value' => (int)($copies['available'] ?? 0),    'color' => '#10B981'],
@@ -190,7 +190,7 @@ class DashboardController extends Controller
                 ->whereNull('bd.return_date')->whereRaw('COALESCE(bd.renewed_due_date, bt.due_date) < CURDATE()')
                 ->distinct()->count('bt.user_id'),
             DB::table('fines')->where('status', 'unpaid')->sum('amount'),
-            DB::table('reservations')->whereIn('status', ['waiting', 'ready'])->count(),
+            DB::table('reservations')->whereIn('status', ['pending', 'ready_for_pickup'])->count(),
             (
                 DB::table('borrow_transactions')->whereDate('borrow_date', today())->count()
                 + DB::table('borrow_details')->whereDate('return_date', today())->count()
@@ -236,11 +236,11 @@ class DashboardController extends Controller
                         'heavy'  => (int)($overdueSeverity->heavy  ?? 0),
                     ],
                     'reservation_flow'     => [
-                        'waiting'   => (int)($reservationFlow['waiting']   ?? 0),
-                        'ready'     => (int)($reservationFlow['ready']     ?? 0),
-                        'converted' => (int)($reservationFlow['converted'] ?? 0),
-                        'expired'   => (int)($reservationFlow['expired']   ?? 0),
-                        'cancelled' => (int)($reservationFlow['cancelled'] ?? 0),
+                        'pending'          => (int)($reservationFlow['pending']          ?? 0),
+                        'ready_for_pickup' => (int)($reservationFlow['ready_for_pickup'] ?? 0),
+                        'completed'        => (int)($reservationFlow['completed']        ?? 0),
+                        'expired'          => (int)($reservationFlow['expired']          ?? 0),
+                        'cancelled'        => (int)($reservationFlow['cancelled']        ?? 0),
                     ],
                 ],
             ],

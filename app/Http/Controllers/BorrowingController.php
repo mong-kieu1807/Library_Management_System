@@ -197,7 +197,7 @@ class BorrowingController extends Controller
 
         $hasReservation = DB::table('reservations')
             ->where('book_id', $bookId)
-            ->whereIn('status', ['waiting', 'ready'])
+            ->whereIn('status', ['pending', 'ready_for_pickup'])
             ->where('user_id', '<>', $userId)
             ->exists();
 

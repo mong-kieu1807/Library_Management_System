@@ -221,6 +221,7 @@ Route::middleware(['auth:sanctum', 'role:admin,librarian'])->prefix('private/v1'
         Route::get('/search-book',  [AdminReservationController::class, 'searchBook']);
         Route::get('/list',         [AdminReservationController::class, 'listReservations']);
         Route::post('/create',      [AdminReservationController::class, 'createReservation']);
+        Route::post('/mark-ready',  [AdminReservationController::class, 'markReady']);
         Route::post('/confirm',     [AdminReservationController::class, 'confirmReservation']);
         Route::post('/cancel',      [AdminReservationController::class, 'cancelReservation']);
         Route::post('/expire',      [AdminReservationController::class, 'expireReservations']);

@@ -257,20 +257,12 @@ class BookService
                 ->where('status', 'available')
                 ->count();
 
-            if ($availableCopies > 0) {
-                return [
-                    'success'          => false,
-                    'error'            => 'book_available',
-                    'title'            => $book->title,
-                    'available_copies' => $availableCopies,
-                    'message'          => "Sách \"{$book->title}\" hiện còn {$availableCopies} bản có thể mượn trực tiếp tại quầy — không cần đặt trước.",
-                ];
-            }
+            $pickupType = $availableCopies > 0 ? 'counter' : 'online';
 
             $existing = DB::table('reservations')
                 ->where('user_id', $userId)
                 ->where('book_id', $bookId)
-                ->whereIn('status', ['waiting', 'ready'])
+                ->whereIn('status', ['pending', 'ready_for_pickup'])
                 ->lockForUpdate()
                 ->first();
 
@@ -291,7 +283,7 @@ class BookService
 
             $activeCount = DB::table('reservations')
                 ->where('user_id', $userId)
-                ->whereIn('status', ['waiting', 'ready'])
+                ->whereIn('status', ['pending', 'ready_for_pickup'])
                 ->count();
 
             if ($activeCount >= $maxPerUser) {
@@ -302,16 +294,21 @@ class BookService
                 ];
             }
 
-            $nextPosition = (int) DB::table('reservations')
-                ->where('book_id', $bookId)
-                ->whereIn('status', ['waiting', 'ready'])
-                ->max('queue_position') + 1;
+            $nextPosition = null;
+            if ($pickupType === 'online') {
+                $nextPosition = (int) DB::table('reservations')
+                    ->where('book_id', $bookId)
+                    ->where('status', 'pending')
+                    ->where('pickup_type', 'online')
+                    ->max('queue_position') + 1;
+            }
 
             $reservationId = DB::table('reservations')->insertGetId([
                 'user_id'        => $userId,
                 'book_id'        => $bookId,
+                'pickup_type'    => $pickupType,
                 'queue_position' => $nextPosition,
-                'status'         => 'waiting',
+                'status'         => 'pending',
                 'notified_at'    => null,
                 'expired_at'     => null,
                 'created_at'     => now(),
@@ -321,14 +318,19 @@ class BookService
                 ->where('reservation_id', $reservationId)
                 ->first();
 
+            $message = $pickupType === 'counter'
+                ? "Đặt sách \"{$book->title}\" thành công! Sách hiện có sẵn, vui lòng đến quầy thư viện để nhận sách."
+                : "Đặt trước sách \"{$book->title}\" thành công! Bạn đang ở vị trí {$inserted->queue_position} trong hàng chờ. Chúng tôi sẽ thông báo khi sách sẵn sàng.";
+
             return [
                 'success'        => true,
                 'reservation_id' => (int) $inserted->reservation_id,
                 'book_id'        => (int) $inserted->book_id,
                 'title'          => $book->title,
-                'queue_position' => (int) $inserted->queue_position,
+                'pickup_type'    => $inserted->pickup_type,
+                'queue_position' => $inserted->queue_position !== null ? (int) $inserted->queue_position : null,
                 'status'         => $inserted->status,
-                'message'        => "Đặt trước sách \"{$book->title}\" thành công! Bạn đang ở vị trí {$inserted->queue_position} trong hàng chờ. Chúng tôi sẽ thông báo khi sách sẵn sàng.",
+                'message'        => $message,
             ];
         });
     }

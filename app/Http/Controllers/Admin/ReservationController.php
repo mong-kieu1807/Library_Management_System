@@ -6,11 +6,19 @@ use Carbon\Carbon;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\CreateReservationRequest;
 use App\Http\Requests\ConfirmReservationRequest;
+use App\Http\Requests\MarkReadyRequest;
+use App\Mail\ReservationAvailableMail;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Mail;
 
 class ReservationController extends Controller
 {
+    /**
+     * Số ngày độc giả có để đến nhận sách kể từ khi Reservation chuyển sang ready_for_pickup.
+     */
+    private const PICKUP_WINDOW_DAYS = 2;
+
     /**
      * GET /private/v1/reservation/search-book?keyword=
      *
@@ -32,7 +40,7 @@ class ReservationController extends Controller
                 DB::raw('COALESCE(a.author_name, "") AS author_name'),
                 DB::raw('(SELECT COUNT(*) FROM book_copies bc WHERE bc.book_id = b.book_id AND bc.status = "available") AS available_copies'),
                 DB::raw('(SELECT COUNT(*) FROM book_copies bc WHERE bc.book_id = b.book_id) AS total_copies'),
-                DB::raw('(SELECT COUNT(*) FROM reservations r WHERE r.book_id = b.book_id AND r.status IN ("waiting","ready")) AS queue_count'),
+                DB::raw('(SELECT COUNT(*) FROM reservations r WHERE r.book_id = b.book_id AND r.status = "pending" AND r.pickup_type = "online") AS queue_count'),
             ])
             ->where(function ($q) use ($keyword) {
                 $q->where('b.title', 'LIKE', '%' . $keyword . '%')
@@ -53,10 +61,13 @@ class ReservationController extends Controller
      *
      * Tạo phiếu đặt trước sách.
      *
+     * pickup_type được xác định tự động theo tồn kho:
+     *   - Còn bản available  -> pickup_type = counter (đặt tại quầy, không xếp hàng)
+     *   - Hết bản available  -> pickup_type = online  (xếp hàng chờ FIFO)
+     *
      * Rules:
-     *   1. Sách không có bản copy available
-     *   2. User chưa có reservation active (waiting/ready) cho cùng book
-     *   3. User chưa đạt max_reservations_per_user
+     *   1. User chưa có reservation active (pending/ready_for_pickup) cho cùng book
+     *   2. User chưa đạt max_reservations_per_user
      */
     public function createReservation(CreateReservationRequest $request)
     {
@@ -80,24 +91,11 @@ class ReservationController extends Controller
             return response()->json(['code' => 422, 'message' => 'Thẻ thư viện đã hết hạn.'], 422);
         }
 
-        // [1] Check available copies
-        $availableCount = DB::table('book_copies')
-            ->where('book_id', $bookId)
-            ->where('status', 'available')
-            ->count();
-
-        if ($availableCount > 0) {
-            return response()->json([
-                'code'    => 422,
-                'message' => "Sách hiện còn {$availableCount} bản copy sẵn có, vui lòng đến quầy để mượn trực tiếp.",
-            ], 422);
-        }
-
-        // [2] Kiểm tra user đã có reservation active cho book này chưa
+        // [1] Kiểm tra user đã có reservation active cho book này chưa
         $existing = DB::table('reservations')
             ->where('user_id', $userId)
             ->where('book_id', $bookId)
-            ->whereIn('status', ['waiting', 'ready'])
+            ->whereIn('status', ['pending', 'ready_for_pickup'])
             ->exists();
 
         if ($existing) {
@@ -107,10 +105,10 @@ class ReservationController extends Controller
             ], 422);
         }
 
-        // [3] Kiểm tra max reservations per user
+        // [2] Kiểm tra max reservations per user
         $activeCount = DB::table('reservations')
             ->where('user_id', $userId)
-            ->whereIn('status', ['waiting', 'ready'])
+            ->whereIn('status', ['pending', 'ready_for_pickup'])
             ->count();
 
         if ($activeCount >= $maxPerUser) {
@@ -120,40 +118,51 @@ class ReservationController extends Controller
             ], 422);
         }
 
-        // [4] Tính queue_position (FIFO — max hiện tại + 1)
-        $nextPosition = (int) DB::table('reservations')
+        // [3] Xác định pickup_type theo tồn kho hiện tại
+        $availableCount = DB::table('book_copies')
             ->where('book_id', $bookId)
-            ->whereIn('status', ['waiting', 'ready'])
-            ->max('queue_position') + 1;
+            ->where('status', 'available')
+            ->count();
+
+        $pickupType = $availableCount > 0 ? 'counter' : 'online';
+
+        // [4] queue_position chỉ có ý nghĩa với online (FIFO — max hiện tại + 1)
+        $nextPosition = null;
+        if ($pickupType === 'online') {
+            $nextPosition = (int) DB::table('reservations')
+                ->where('book_id', $bookId)
+                ->where('status', 'pending')
+                ->where('pickup_type', 'online')
+                ->max('queue_position') + 1;
+        }
+
+        $title = DB::table('books')->where('book_id', $bookId)->value('title');
 
         $now           = Carbon::now();
         $reservationId = DB::table('reservations')->insertGetId([
             'user_id'        => $userId,
             'book_id'        => $bookId,
+            'pickup_type'    => $pickupType,
             'queue_position' => $nextPosition,
-            'status'         => 'waiting',
+            'status'         => 'pending',
             'notified_at'    => null,
             'expired_at'     => null,
             'created_at'     => $now,
         ]);
-        DB::table('notifications')->insert([
-            'user_id' => $userId,
-            'title' => 'Đặt trước thành công',
-            'content' => "Bạn đã đặt trước sách '{$title}'. Vị trí hàng chờ: {$nextPosition}.",
-            'type' => 'reservation',
-            'is_read' => 0,
-            'created_at' => now(),
-        ]);
-        $title = DB::table('books')->where('book_id', $bookId)->value('title');
+
+        $content = $pickupType === 'counter'
+            ? "Bạn đã đặt trước sách '{$title}'. Vui lòng đến quầy thư viện để nhận sách."
+            : "Bạn đã đặt trước sách '{$title}'. Vị trí hàng chờ: {$nextPosition}.";
 
         DB::table('notifications')->insert([
-            'user_id' => $userId,
-            'title' => 'Đặt trước thành công',
-            'content' => "Bạn đã đặt trước sách '{$title}'. Vị trí hàng chờ: {$nextPosition}.",
-            'type' => 'reservation',
-            'is_read' => 0,
+            'user_id'    => $userId,
+            'title'      => 'Đặt trước thành công',
+            'content'    => $content,
+            'type'       => 'reservation',
+            'is_read'    => 0,
             'created_at' => now(),
         ]);
+
         return response()->json([
             'code'    => 200,
             'message' => 'Đặt trước sách thành công.',
@@ -161,8 +170,9 @@ class ReservationController extends Controller
                 'reservation_id' => $reservationId,
                 'book_id'        => $bookId,
                 'title'          => $title,
+                'pickup_type'    => $pickupType,
                 'queue_position' => $nextPosition,
-                'status'         => 'waiting',
+                'status'         => 'pending',
                 'created_at'     => $now->toDateTimeString(),
             ]],
         ]);
@@ -174,7 +184,7 @@ class ReservationController extends Controller
      * Danh sách phiếu đặt trước.
      * ?user_id= (optional) lọc theo user
      * ?status=  (optional) lọc theo trạng thái
-     * Tính actual_queue_position thực tế (bỏ qua cancelled/expired).
+     * actual_queue_position chỉ tính trong nhóm pending+online (những người thực sự đang xếp hàng).
      */
     public function listReservations(Request $request)
     {
@@ -195,13 +205,17 @@ class ReservationController extends Controller
                 'b.title',
                 'b.cover_image',
                 'r.status',
+                'r.pickup_type',
+                'r.copy_id',
                 'r.queue_position',
                 'r.notified_at',
+                'r.ready_at',
+                'r.pickup_deadline',
                 'r.expired_at',
                 'r.created_at',
                 DB::raw('(SELECT COUNT(*) + 1 FROM reservations r2
                     WHERE r2.book_id = r.book_id
-                    AND r2.status IN ("waiting","ready")
+                    AND r2.status = "pending" AND r2.pickup_type = "online"
                     AND r2.created_at < r.created_at) AS actual_queue_position'),
             ])
             ->orderBy('r.created_at', 'desc');
@@ -227,18 +241,127 @@ class ReservationController extends Controller
     }
 
     /**
+     * POST /private/v1/reservation/mark-ready
+     *
+     * "Xác nhận có sách" — chỉ áp dụng cho reservation pending + pickup_type=online.
+     * Gán 1 bản sao available cho reservation đứng đầu hàng chờ, khóa bản sao lại,
+     * và chuyển reservation sang giai đoạn "đến quầy nhận" (ready_for_pickup).
+     */
+    public function markReady(MarkReadyRequest $request)
+    {
+        $reservationId = (int) $request->input('reservation_id');
+
+        try {
+            $result = DB::transaction(function () use ($reservationId) {
+                $reservation = DB::table('reservations')
+                    ->where('reservation_id', $reservationId)
+                    ->lockForUpdate()
+                    ->first();
+
+                if (!$reservation) {
+                    throw new \RuntimeException('INVALID:Phiếu đặt trước không tồn tại.');
+                }
+                if ($reservation->status !== 'pending' || $reservation->pickup_type !== 'online') {
+                    throw new \RuntimeException('INVALID:Phiếu đặt trước không ở trạng thái chờ online (trạng thái: ' . $reservation->status . '/' . $reservation->pickup_type . ').');
+                }
+
+                // Phải xác nhận đúng thứ tự hàng chờ (người đứng đầu trước)
+                $firstInQueue = DB::table('reservations')
+                    ->where('book_id', $reservation->book_id)
+                    ->where('status', 'pending')
+                    ->where('pickup_type', 'online')
+                    ->orderBy('queue_position')
+                    ->orderBy('created_at')
+                    ->first();
+
+                if ($firstInQueue && (int) $firstInQueue->reservation_id !== $reservationId) {
+                    throw new \RuntimeException('INVALID:Phải xác nhận theo đúng thứ tự hàng chờ. Phiếu #' . $firstInQueue->reservation_id . ' đang đứng trước.');
+                }
+
+                $copy = DB::table('book_copies')
+                    ->where('book_id', $reservation->book_id)
+                    ->where('status', 'available')
+                    ->orderBy('copy_id')
+                    ->lockForUpdate()
+                    ->first();
+
+                if (!$copy) {
+                    throw new \RuntimeException('INVALID:Hiện không có bản sao khả dụng cho sách này.');
+                }
+
+                $now      = now();
+                $deadline = $now->copy()->addDays(self::PICKUP_WINDOW_DAYS);
+
+                DB::table('book_copies')->where('copy_id', $copy->copy_id)->update(['status' => 'reserved']);
+
+                DB::table('reservations')->where('reservation_id', $reservationId)->update([
+                    'copy_id'         => $copy->copy_id,
+                    'pickup_type'     => 'counter',
+                    'status'          => 'ready_for_pickup',
+                    'ready_at'        => $now,
+                    'notified_at'     => $now,
+                    'pickup_deadline' => $deadline,
+                ]);
+
+                $user  = DB::table('users')->where('user_id', $reservation->user_id)->first();
+                $book  = DB::table('books')->where('book_id', $reservation->book_id)->first();
+                $libraryName = config('app.name') ?? 'Thư Viện';
+
+                if ($user && $user->email) {
+                    try {
+                        Mail::to($user->email)->send(new ReservationAvailableMail(
+                            $user->full_name,
+                            $book->title,
+                            $libraryName,
+                            $now->toDateTimeString(),
+                            $deadline->toDateTimeString()
+                        ));
+                    } catch (\Throwable $e) {
+                        // không chặn luồng nếu gửi mail lỗi — notification in-app vẫn được tạo
+                    }
+                }
+
+                DB::table('notifications')->insert([
+                    'user_id'    => $reservation->user_id,
+                    'title'      => 'Sách đặt trước đã có sẵn',
+                    'content'    => "Sách bạn đặt trước đã có sẵn. Vui lòng đến thư viện trong vòng " . self::PICKUP_WINDOW_DAYS . " ngày để nhận sách.",
+                    'type'       => 'reservation',
+                    'is_read'    => 0,
+                    'created_at' => now(),
+                ]);
+
+                return [
+                    'reservation_id'  => $reservationId,
+                    'copy_id'         => $copy->copy_id,
+                    'book_title'      => $book->title,
+                    'ready_at'        => $now->toDateTimeString(),
+                    'pickup_deadline' => $deadline->toDateTimeString(),
+                ];
+            });
+
+            return response()->json([
+                'code'    => 200,
+                'message' => 'Đã xác nhận có sách, độc giả có ' . self::PICKUP_WINDOW_DAYS . ' ngày để đến nhận.',
+                'results' => ['object' => $result],
+            ]);
+        } catch (\RuntimeException $e) {
+            $msg = $e->getMessage();
+            if (str_starts_with($msg, 'INVALID:')) {
+                return response()->json(['code' => 422, 'message' => substr($msg, strlen('INVALID:'))], 422);
+            }
+            throw $e;
+        }
+    }
+
+    /**
      * POST /private/v1/reservation/confirm
      *
-     * Xác nhận đặt trước tại quầy → tạo borrow_transaction + borrow_detail.
+     * "Xác nhận đã nhận sách" — chỉ lúc này mới tạo borrow_transaction + borrow_detail.
      *
-     * Transaction flow:
-     *   1. Lock reservation + book_copies
-     *   2. Validate status (waiting/ready), copy đúng book + available
-     *   3. Validate max_books_per_user
-     *   4. INSERT borrow_transaction
-     *   5. INSERT borrow_detail
-     *   6. UPDATE book_copies → borrowed
-     *   7. UPDATE reservation → converted
+     * Hai nhánh:
+     *   - pending + counter (chưa gán copy): copy_id bắt buộc từ request (thủ thư chọn/scan).
+     *   - ready_for_pickup (đã gán + khóa copy ở bước mark-ready): dùng reservation->copy_id,
+     *     không cần copy_id từ request (nếu có gửi lên thì phải khớp).
      */
     public function confirmReservation(ConfirmReservationRequest $request)
     {
@@ -250,38 +373,55 @@ class ReservationController extends Controller
         $maxBooksPerUser = (int) ($settings['max_books_per_user'] ?? 5);
         $librarianId     = auth()->id();
         $reservationId   = (int) $request->input('reservation_id');
-        $copyId          = (int) $request->input('copy_id');
+        $requestedCopyId = $request->filled('copy_id') ? (int) $request->input('copy_id') : null;
 
         try {
             $result = DB::transaction(function () use (
-                $reservationId, $copyId, $librarianId, $maxBorrowDays, $maxBooksPerUser
+                $reservationId, $requestedCopyId, $librarianId, $maxBorrowDays, $maxBooksPerUser
             ) {
-                // [1] LOCK
+                // [1] LOCK reservation
                 $reservation = DB::table('reservations')
                     ->where('reservation_id', $reservationId)
                     ->lockForUpdate()
                     ->first();
 
-                $copy = DB::table('book_copies')
-                    ->where('copy_id', $copyId)
-                    ->lockForUpdate()
-                    ->first();
-
-                // [2] VALIDATE reservation
                 if (!$reservation) {
                     throw new \RuntimeException('INVALID:Phiếu đặt trước không tồn tại.');
                 }
-                if (!$copy) {
-                    throw new \RuntimeException('INVALID:Bản sao không tồn tại trong hệ thống.');
-                }
-                if (!in_array($reservation->status, ['waiting', 'ready'])) {
-                    throw new \RuntimeException('INVALID:Phiếu đặt trước không còn hợp lệ (trạng thái: ' . $reservation->status . ').');
-                }
-                if ((int) $copy->book_id !== (int) $reservation->book_id) {
-                    throw new \RuntimeException('INVALID:Bản sao này không thuộc sách được đặt trước.');
-                }
-                if ($copy->status !== 'available') {
-                    throw new \RuntimeException('INVALID:Bản sao này không sẵn sàng để cho mượn (trạng thái: ' . $copy->status . ').');
+
+                // [2] Xác định copy_id theo đúng nhánh nghiệp vụ
+                if ($reservation->status === 'ready_for_pickup') {
+                    if (!$reservation->copy_id) {
+                        throw new \RuntimeException('INVALID:Phiếu đặt trước chưa được gán bản sao.');
+                    }
+                    if ($reservation->pickup_deadline && Carbon::parse($reservation->pickup_deadline)->isPast()) {
+                        throw new \RuntimeException('INVALID:Phiếu đặt trước đã quá hạn nhận sách.');
+                    }
+                    if ($requestedCopyId !== null && $requestedCopyId !== (int) $reservation->copy_id) {
+                        throw new \RuntimeException('INVALID:Bản sao không khớp với bản sao đã được giữ cho phiếu này.');
+                    }
+                    $copyId = (int) $reservation->copy_id;
+                    $copy   = DB::table('book_copies')->where('copy_id', $copyId)->lockForUpdate()->first();
+                    if (!$copy || $copy->status !== 'reserved') {
+                        throw new \RuntimeException('INVALID:Bản sao không còn ở trạng thái đã giữ chỗ (trạng thái: ' . ($copy->status ?? 'không tồn tại') . ').');
+                    }
+                } elseif ($reservation->status === 'pending' && $reservation->pickup_type === 'counter') {
+                    if (!$requestedCopyId) {
+                        throw new \RuntimeException('INVALID:Vui lòng chọn bản sao sách sẽ giao cho độc giả.');
+                    }
+                    $copyId = $requestedCopyId;
+                    $copy   = DB::table('book_copies')->where('copy_id', $copyId)->lockForUpdate()->first();
+                    if (!$copy) {
+                        throw new \RuntimeException('INVALID:Bản sao không tồn tại trong hệ thống.');
+                    }
+                    if ((int) $copy->book_id !== (int) $reservation->book_id) {
+                        throw new \RuntimeException('INVALID:Bản sao này không thuộc sách được đặt trước.');
+                    }
+                    if ($copy->status !== 'available') {
+                        throw new \RuntimeException('INVALID:Bản sao này không sẵn sàng để cho mượn (trạng thái: ' . $copy->status . ').');
+                    }
+                } else {
+                    throw new \RuntimeException('INVALID:Phiếu đặt trước không ở trạng thái có thể nhận sách (trạng thái: ' . $reservation->status . ').');
                 }
 
                 $userId = (int) $reservation->user_id;
@@ -323,18 +463,20 @@ class ReservationController extends Controller
                 // [6] UPDATE book_copies → borrowed
                 DB::table('book_copies')->where('copy_id', $copyId)->update(['status' => 'borrowed']);
 
-                // [7] UPDATE reservation → converted
+                // [7] UPDATE reservation → completed
                 DB::table('reservations')->where('reservation_id', $reservationId)->update([
-                    'status'      => 'converted',
+                    'status'      => 'completed',
+                    'copy_id'     => $copyId,
                     'notified_at' => now(),
                 ]);
+
                 $bookTitle = DB::table('books')->where('book_id', $reservation->book_id)->value('title');
                 DB::table('notifications')->insert([
-                    'user_id' => $userId,
-                    'title' => 'Đặt trước hoàn tất',
-                    'content' => "Bạn đã nhận thành công sách '{$bookTitle}'.",
-                    'type' => 'reservation',
-                    'is_read' => 0,
+                    'user_id'    => $userId,
+                    'title'      => 'Đặt trước hoàn tất',
+                    'content'    => "Bạn đã nhận thành công sách '{$bookTitle}'.",
+                    'type'       => 'reservation',
+                    'is_read'    => 0,
                     'created_at' => now(),
                 ]);
 
@@ -350,7 +492,7 @@ class ReservationController extends Controller
 
             return response()->json([
                 'code'    => 200,
-                'message' => 'Xác nhận đặt trước thành công. Phiếu mượn đã được tạo.',
+                'message' => 'Xác nhận đã nhận sách thành công. Phiếu mượn đã được tạo.',
                 'results' => ['object' => $result],
             ]);
 
@@ -375,7 +517,8 @@ class ReservationController extends Controller
     /**
      * POST /private/v1/reservation/cancel
      *
-     * Hủy phiếu đặt trước (waiting hoặc ready).
+     * Hủy phiếu đặt trước (pending hoặc ready_for_pickup).
+     * Nếu đang ready_for_pickup (đã khóa 1 bản sao riêng) thì giải phóng bản sao đó.
      */
     public function cancelReservation(Request $request)
     {
@@ -392,29 +535,39 @@ class ReservationController extends Controller
             return response()->json(['code' => 404, 'message' => 'Phiếu đặt trước không tồn tại.'], 404);
         }
 
-        if (!in_array($reservation->status, ['waiting', 'ready'])) {
+        if (!in_array($reservation->status, ['pending', 'ready_for_pickup'])) {
             return response()->json([
                 'code'    => 422,
-                'message' => 'Chỉ có thể hủy phiếu đang ở trạng thái chờ hoặc sẵn sàng.',
+                'message' => 'Chỉ có thể hủy phiếu đang ở trạng thái chờ hoặc sẵn sàng nhận.',
             ], 422);
         }
 
-        DB::table('reservations')
-            ->where('reservation_id', $reservationId)
-            ->update(['status' => 'cancelled']);
+        DB::transaction(function () use ($reservation) {
+            DB::table('reservations')
+                ->where('reservation_id', $reservation->reservation_id)
+                ->update(['status' => 'cancelled']);
 
-            $title = DB::table('books')
+            if ($reservation->status === 'ready_for_pickup' && $reservation->copy_id) {
+                DB::table('book_copies')
+                    ->where('copy_id', $reservation->copy_id)
+                    ->where('status', 'reserved')
+                    ->update(['status' => 'available']);
+            }
+        });
+
+        $title = DB::table('books')
             ->where('book_id', $reservation->book_id)
             ->value('title');
 
         DB::table('notifications')->insert([
-            'user_id' => $reservation->user_id,
-            'title' => 'Đã hủy đặt trước',
-            'content' => "Phiếu đặt trước sách '{$title}' đã được hủy.",
-            'type' => 'reservation',
-            'is_read' => 0,
+            'user_id'    => $reservation->user_id,
+            'title'      => 'Đã hủy đặt trước',
+            'content'    => "Phiếu đặt trước sách '{$title}' đã được hủy.",
+            'type'       => 'reservation',
+            'is_read'    => 0,
             'created_at' => now(),
         ]);
+
         return response()->json([
             'code'    => 200,
             'message' => 'Đã hủy phiếu đặt trước.',
@@ -424,37 +577,43 @@ class ReservationController extends Controller
     /**
      * POST /private/v1/reservation/expire
      *
-     * Hết hạn các phiếu ready đã quá expired_at.
-     * Thường được gọi bởi cron job / Artisan command.
+     * Hết hạn các phiếu ready_for_pickup đã quá pickup_deadline + giải phóng bản sao.
+     * Thường được gọi bởi cron job / Artisan command (reservations:expire).
      */
     public function expireReservations()
     {
         $reservations = DB::table('reservations')
-            ->where('status', 'ready')
-            ->whereNotNull('expired_at')
-            ->where('expired_at', '<', now())
+            ->where('status', 'ready_for_pickup')
+            ->whereNotNull('pickup_deadline')
+            ->where('pickup_deadline', '<', now())
             ->get();
 
         foreach ($reservations as $reservation) {
+            DB::transaction(function () use ($reservation) {
+                DB::table('reservations')
+                    ->where('reservation_id', $reservation->reservation_id)
+                    ->update(['status' => 'expired']);
 
-            DB::table('reservations')
-                ->where('reservation_id', $reservation->reservation_id)
-                ->update([
-                    'status' => 'expired'
+                if ($reservation->copy_id) {
+                    DB::table('book_copies')
+                        ->where('copy_id', $reservation->copy_id)
+                        ->where('status', 'reserved')
+                        ->update(['status' => 'available']);
+                }
+
+                $title = DB::table('books')
+                    ->where('book_id', $reservation->book_id)
+                    ->value('title');
+
+                DB::table('notifications')->insert([
+                    'user_id'    => $reservation->user_id,
+                    'title'      => 'Phiếu đặt trước đã hết hạn',
+                    'content'    => "Phiếu đặt trước sách '{$title}' đã hết hạn.",
+                    'type'       => 'reservation',
+                    'is_read'    => 0,
+                    'created_at' => now(),
                 ]);
-
-            $title = DB::table('books')
-                ->where('book_id', $reservation->book_id)
-                ->value('title');
-
-            DB::table('notifications')->insert([
-                'user_id'    => $reservation->user_id,
-                'title'      => 'Phiếu đặt trước đã hết hạn',
-                'content'    => "Phiếu đặt trước sách '{$title}' đã hết hạn.",
-                'type'       => 'reservation',
-                'is_read'    => 0,
-                'created_at' => now(),
-            ]);
+            });
         }
 
         return response()->json([

@@ -16,9 +16,13 @@ class Reservation extends Model
     protected $fillable = [
         'user_id',
         'book_id',
+        'pickup_type',
+        'copy_id',
         'queue_position',
         'status',
         'notified_at',
+        'ready_at',
+        'pickup_deadline',
         'expired_at',
         'created_at'
     ];
@@ -32,5 +36,10 @@ class Reservation extends Model
     {
         return $this->belongsTo(Book::class, 'book_id');
     }
-    
+
+    public function copy()
+    {
+        return $this->belongsTo(BookCopy::class, 'copy_id', 'copy_id');
+    }
+
 }

@@ -22,9 +22,9 @@ class RenewController extends Controller
         $maxRenewTimes = (int) DB::table('system_settings')
             ->where('config_key', 'max_renew_times')->value('config_value') ?: 2;
 
-        // Lấy các book_id đang có reservation waiting
+        // Lấy các book_id đang có reservation active
         $reservedBookIds = DB::table('reservations')
-            ->whereIn('status', ['waiting', 'ready'])
+            ->whereIn('status', ['pending', 'ready_for_pickup'])
             ->pluck('book_id')
             ->unique()
             ->toArray();
@@ -152,7 +152,7 @@ class RenewController extends Controller
                 $bookIds = $details->pluck('book_id')->unique()->toArray();
                 $hasReservation = DB::table('reservations')
                     ->whereIn('book_id', $bookIds)
-                    ->where('status', 'waiting')
+                    ->where('status', 'pending')
                     ->exists();
                 if ($hasReservation) {
                     throw new \RuntimeException('RESERVATION:active reservation');
