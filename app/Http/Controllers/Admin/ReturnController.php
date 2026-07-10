@@ -184,7 +184,7 @@ class ReturnController extends Controller
 
                 $totalPenalty = 0;
                 $fineInserts  = [];
-                $fineUpdates  = [];  // [fine_id => new_amount]
+                $fineUpdates  = [];  // [fine_id => ['amount' => ..., 'reason' => ...]]
 
                 foreach ($details as $detail) {
                     $overdueDays = $this->calculateOverdueDays($detail->renewed_due_date ?? $detail->due_date, $today);
@@ -195,16 +195,37 @@ class ReturnController extends Controller
 
                     $key      = $detail->borrow_id . '-' . $detail->copy_id;
                     $existing = $existingFines->get($key);
+                    // Chỉ coi là "cùng một khoản phí trễ hạn cần cập nhật" nếu fine sẵn có
+                    // cũng là phí trễ hạn (reason chứa "trễ"/"quá hạn") — tránh trường hợp
+                    // hiếm gặp: copy đã có sẵn 1 fine hỏng/mất (unpaid) trùng borrow_id+copy_id,
+                    // không được ghi đè/biến nó thành phí trễ hạn.
+                    $existingIsLate = $existing && (
+                        str_contains($existing->reason, 'trễ') || str_contains($existing->reason, 'quá hạn')
+                    );
 
-                    if ($existing) {
-                        $fineUpdates[$existing->fine_id] = (int) $existing->amount + $fineAmt;
+                    // reason phản ánh đúng số ngày đã chốt (VD "Trả trễ 867 ngày") — để
+                    // reason không còn lệch với amount/số ngày thực tế (đúng nguồn gây audit
+                    // trước đó, tránh trường hợp reason cũ "Trả trễ 1 ngày" nhưng amount đã
+                    // được chốt theo hàng trăm ngày).
+                    $chargedReason = "Trả trễ {$overdueDays} ngày";
+
+                    if ($existingIsLate) {
+                        // KHÔNG cộng dồn "existing->amount + fineAmt" (bug cũ từng khiến
+                        // fine_id=43 tăng 20.000đ -> 4.305.000đ vì có sẵn 1 fine unpaid cho
+                        // cùng borrow_id+copy_id). Nguồn sự thật cho khoản phí trễ hạn của
+                        // LƯỢT TRẢ SÁCH này là overdueDays vừa tính (due_date thật -> hôm nay,
+                        // tức return_date) — ghi đè bằng giá trị mới.
+                        $fineUpdates[$existing->fine_id] = [
+                            'amount' => $fineAmt,
+                            'reason' => $chargedReason,
+                        ];
                     } else {
                         $fineInserts[] = [
                             'user_id'    => $userId,
                             'borrow_id'  => (int) $detail->borrow_id,
                             'copy_id'    => (int) $detail->copy_id,
                             'amount'     => $fineAmt,
-                            'reason'     => 'Trả sách quá hạn',
+                            'reason'     => $chargedReason,
                             'status'     => 'unpaid',
                             'created_at' => now(),
                         ];
@@ -223,8 +244,8 @@ class ReturnController extends Controller
 
                     DB::table('fines')->insert($fineInserts);
                 }
-                foreach ($fineUpdates as $fineId => $newAmount) {
-                    DB::table('fines')->where('fine_id', $fineId)->update(['amount' => $newAmount]);
+                foreach ($fineUpdates as $fineId => $update) {
+                    DB::table('fines')->where('fine_id', $fineId)->update($update);
                 }
                     Notification::create([
                         'user_id' => $userId,
@@ -449,20 +470,13 @@ class ReturnController extends Controller
         ]);
     }
 
+    // Delegate sang OverdueCalculator — nguồn sự thật DUY NHẤT cho "số ngày quá hạn" trong
+    // toàn hệ thống (đã xác nhận với người dùng: một công thức chung, KHÔNG loại trừ ngày
+    // nghỉ, áp dụng thống nhất cho BorrowingController/FineController/ReturnController/
+    // FineService/backfill command). Trước đây hàm này tự trừ ngày nghỉ riêng — bỏ để
+    // tránh duy trì công thức thứ hai khác với "Đang mượn"/"Lịch sử phí".
     private function calculateOverdueDays(string $dueDateStr, \Carbon\Carbon $today): int
     {
-        $due = \Carbon\Carbon::parse($dueDateStr)->startOfDay();
-        $overdueDays = $today->gt($due) ? (int) $today->diffInDays($due, true) : 0;
-
-        if ($overdueDays > 0) {
-            $holidayCount = DB::table('holidays')
-                ->where('holiday_date', '>', $due->toDateString())
-                ->where('holiday_date', '<=', $today->toDateString())
-                ->count();
-
-            $overdueDays = max(0, $overdueDays - $holidayCount);
-        }
-
-        return $overdueDays;
+        return \App\Services\OverdueCalculator::daysLate($dueDateStr, $today->toDateString());
     }
 }

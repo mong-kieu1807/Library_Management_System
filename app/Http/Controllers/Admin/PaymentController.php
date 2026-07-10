@@ -29,8 +29,11 @@ class PaymentController extends Controller
             ]);
         } catch (\RuntimeException $e) {
             $msg = match (true) {
-                str_contains($e->getMessage(), 'not found')   => 'Không tìm thấy khoản phí.',
-                str_contains($e->getMessage(), 'already paid') => 'Khoản phí này đã được thanh toán.',
+                str_contains($e->getMessage(), 'not found')            => 'Không tìm thấy khoản phí.',
+                str_contains($e->getMessage(), 'already paid')         => 'Khoản phí này đã được thanh toán.',
+                str_contains($e->getMessage(), 'no borrow data')       => 'Không tìm thấy dữ liệu mượn/trả tương ứng với khoản phí trễ hạn này.',
+                str_contains($e->getMessage(), 'not actually overdue') => 'Khoản phí trễ hạn này chưa thực sự quá hạn theo dữ liệu mượn/trả hiện tại — vui lòng kiểm tra lại due_date/return_date trước khi xác nhận thanh toán.',
+                str_contains($e->getMessage(), 'payment already exists') => 'Khoản phí này đã có giao dịch thanh toán, không thể tạo thêm.',
                 default => 'Có lỗi xảy ra.',
             };
             return response()->json(['message' => $msg], 422);

@@ -104,13 +104,72 @@ class FineService
             throw new \RuntimeException('INVALID:already paid');
         }
 
-        DB::transaction(function () use ($fine, $method) {
+        // Chỉ áp dụng cho PHÍ TRỄ HẠN (reason chứa "trễ"/"quá hạn") — phí hỏng/mất sách
+        // không phụ thuộc due_date/return_date nên không bị ràng buộc này (audit xác nhận
+        // các fine đó luôn có borrow_id/copy_id hợp lệ, không cần thêm kiểm tra).
+        $finalAmount = (float) $fine->amount;
+        $finalReason = $fine->reason;
+
+        if ($this->isLateReason($fine->reason)) {
+            $borrow = DB::table('borrow_transactions as bt')
+                ->leftJoin('borrow_details as bd', 'bd.borrow_id', '=', 'bt.borrow_id')
+                ->where('bt.borrow_id', $fine->borrow_id)
+                ->where('bd.copy_id', $fine->copy_id)
+                ->select('bt.due_date', 'bd.renewed_due_date', 'bd.return_date')
+                ->first();
+
+            $effectiveDue = $borrow ? ($borrow->renewed_due_date ?? $borrow->due_date) : null;
+            if (!$effectiveDue) {
+                throw new \RuntimeException('INVALID:no borrow data for late fine');
+            }
+
+            $actualDaysLate = OverdueCalculator::daysLate($effectiveDue, $borrow->return_date);
+
+            // Chặn xác nhận thanh toán cho một khoản "trễ hạn" khi dữ liệu mượn/trả cho
+            // thấy khoản đó chưa thực sự trễ (VD: effective_due_date còn ở tương lai) —
+            // đúng lỗ hổng phát hiện qua audit dữ liệu thật (fine 45/49/50).
+            if ($actualDaysLate <= 0) {
+                throw new \RuntimeException('INVALID:not actually overdue');
+            }
+
+            // Sách CHƯA được trả (return_date NULL) => fine.amount trong DB có thể là
+            // snapshot cũ, chưa từng được ReturnController chốt lại (confirmReturn() chỉ
+            // chạy khi sách thực sự được trả — xem audit Mai Gia Bảo/fine 41: DB vẫn giữ
+            // 5.000đ/"1 ngày" trong khi nợ thực tế đã lên tới hàng triệu đồng). PHẢI tính
+            // lại số nợ THẬT bằng đúng công thức dùng chung (OverdueCalculator — giống hệt
+            // "Đang mượn"/"Lịch sử phí" đang hiển thị cho độc giả) và chốt vào DB TRƯỚC khi
+            // tạo payment, để payment.amount không lệch với số tiền độc giả nhìn thấy trên
+            // màn hình. Nếu sách ĐÃ trả (return_date có giá trị), amount đã được
+            // ReturnController chốt đúng tại thời điểm trả — không tính lại.
+            if (!$borrow->return_date) {
+                $finePerDay = (int) DB::table('system_settings')->where('config_key', 'fine_per_day')->value('config_value');
+                $finalAmount = $actualDaysLate * $finePerDay;
+                $finalReason = "Trả trễ {$actualDaysLate} ngày";
+            }
+        }
+
+        // Phòng race condition/dữ liệu bất thường: fine chưa 'paid' nhưng đã có payment
+        // (không nên xảy ra vì update status nằm chung transaction với insert payment bên
+        // dưới, nhưng audit dữ liệu thật cho thấy không nên giả định điều này luôn đúng).
+        if (DB::table('payments')->where('fine_id', $fineId)->exists()) {
+            throw new \RuntimeException('INVALID:payment already exists');
+        }
+
+        DB::transaction(function () use ($fine, $method, $finalAmount, $finalReason) {
+            // Chốt amount/reason THẬT trước khi ghi payment — cùng transaction, không giả
+            // lập return_date, không đổi return_date/borrow status.
+            if ($finalAmount !== (float) $fine->amount || $finalReason !== $fine->reason) {
+                DB::table('fines')
+                    ->where('fine_id', $fine->fine_id)
+                    ->update(['amount' => $finalAmount, 'reason' => $finalReason]);
+            }
+
             $nextPayId = (int)(DB::table('payments')->max('payment_id') ?? 0) + 1;
 
             DB::table('payments')->insert([
                 'payment_id'   => $nextPayId,
                 'fine_id'      => $fine->fine_id,
-                'amount'       => $fine->amount,
+                'amount'       => $finalAmount,
                 'method'       => $method,
                 'payment_date' => now(),
             ]);
@@ -120,7 +179,7 @@ class FineService
                 ->update(['status' => 'paid']);
         });
 
-        return ['fine_id' => $fineId, 'status' => 'paid', 'amount' => (float) $fine->amount];
+        return ['fine_id' => $fineId, 'status' => 'paid', 'amount' => $finalAmount];
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -333,4 +392,14 @@ class FineService
             default  => '',
         };
     }
+
+    // Dùng riêng cho validate ở recordPayment() — whitelist rõ ràng, không mặc định 'late'
+    // cho reason không nhận diện được (khác kiểu blacklist ở formatFine()/type ở trên, vốn
+    // là code cũ đang phục vụ danh sách/lọc phí, không đổi để tránh ảnh hưởng nơi khác đang dùng).
+    private function isLateReason(?string $reason): bool
+    {
+        $reason = $reason ?? '';
+        return str_contains($reason, 'trễ') || str_contains($reason, 'quá hạn');
+    }
+
 }
