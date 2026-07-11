@@ -196,6 +196,7 @@ class ReservationController extends Controller
             ->join('books as b', 'b.book_id', '=', 'r.book_id')
             ->join('users as u', 'u.user_id', '=', 'r.user_id')
             ->leftJoin('library_cards as lc', 'lc.user_id', '=', 'r.user_id')
+            ->leftJoin('book_copies as bc', 'bc.copy_id', '=', 'r.copy_id')
             ->select([
                 'r.reservation_id',
                 'r.book_id',
@@ -207,6 +208,7 @@ class ReservationController extends Controller
                 'r.status',
                 'r.pickup_type',
                 'r.copy_id',
+                'bc.shelf_location',
                 'r.queue_position',
                 'r.notified_at',
                 'r.ready_at',
