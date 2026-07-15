@@ -107,6 +107,7 @@ Route::middleware(['auth:sanctum', 'role:admin,librarian'])->group(function () {
     Route::post('v1/book-copies', [App\Http\Controllers\Admin\BookCopyController::class, 'store']);
     Route::put('v1/book-copies/{id}', [App\Http\Controllers\Admin\BookCopyController::class, 'update']);
     Route::delete('v1/book-copies/{id}', [App\Http\Controllers\Admin\BookCopyController::class, 'destroy']);
+    Route::post('v1/book-copies/liquidate', [App\Http\Controllers\Admin\BookCopyController::class, 'liquidate']);
     Route::post('v1/book-copies/import', [App\Http\Controllers\Admin\BookCopyController::class, 'importCopies']);
     Route::get('v1/book-copies/summary-report', [App\Http\Controllers\Admin\BookCopyController::class, 'summaryReport']);
 

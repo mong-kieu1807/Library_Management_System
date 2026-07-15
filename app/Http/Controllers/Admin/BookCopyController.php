@@ -443,7 +443,9 @@ class BookCopyController extends Controller
                 'đang mượn' => 'borrowed', 'borrowed' => 'borrowed',
                 'đặt trước' => 'reserved', 'reserved' => 'reserved',
                 'bảo trì' => 'maintenance', 'maintenance' => 'maintenance',
-                'mất/hỏng' => 'lost', 'mất' => 'lost', 'lost' => 'lost'
+                'mất/hỏng' => 'lost', 'mất' => 'lost', 'lost' => 'lost',
+                'đã thanh lý' => 'liquidated', 'liquidated' => 'liquidated',
+                'thanh lý' => 'liquidated'
             ];
             $mappedStatus = $statusMap[$status] ?? 'available';
  
@@ -460,7 +462,7 @@ class BookCopyController extends Controller
                 $row[] = implode('; ', $rowErrors);
                 $errorRows[] = $row;
             } else {
-                BookCopy::create([
+                $copy = BookCopy::create([
                     'book_id' => $book->book_id,
                     'barcode' => $barcode,
                     'shelf_location' => $shelfLocation,
@@ -468,6 +470,17 @@ class BookCopyController extends Controller
                     'status' => $mappedStatus,
                     'acquisition_date' => $acquisitionDate
                 ]);
+
+                if ($mappedStatus === 'liquidated') {
+                    \App\Models\CopyRetirement::create([
+                        'copy_id' => $copy->copy_id,
+                        'reason' => 'Thanh lý khi nhập kho hàng loạt',
+                        'retired_by' => auth()->id() ?: 1,
+                        'retired_date' => now()->toDateString(),
+                        'note' => 'Nhập từ file CSV'
+                    ]);
+                }
+
                 $successCount++;
             }
         }
@@ -491,6 +504,62 @@ class BookCopyController extends Controller
             'success_count' => $successCount,
             'errors' => $errors,
             'error_csv' => $errorCsvBase64
+        ]);
+    }
+
+    /**
+     * Liquidate a book copy by barcode directly.
+     */
+    public function liquidate(Request $request)
+    {
+        $validated = $request->validate([
+            'barcode' => 'required|string',
+            'reason' => 'required|string',
+            'retired_date' => 'required|date',
+            'note' => 'nullable|string',
+        ]);
+
+        $copy = BookCopy::where('barcode', $validated['barcode'])->first();
+
+        if (!$copy) {
+            return response()->json([
+                'message' => "Không tìm thấy bản sao nào có barcode '{$validated['barcode']}'"
+            ], 404);
+        }
+
+        if (in_array($copy->status, ['borrowed', 'reserved'])) {
+            return response()->json([
+                'message' => 'Không thể thanh lý bản sao đang được mượn hoặc đặt trước.',
+            ], 422);
+        }
+
+        if ($copy->status === 'liquidated') {
+            return response()->json([
+                'message' => 'Bản sao này đã được thanh lý trước đó.',
+            ], 422);
+        }
+
+        // Soft-retire the copy: update its status to liquidated
+        $copy->update([
+            'status' => 'liquidated'
+        ]);
+
+        // Record details into copy_retirements
+        \App\Models\CopyRetirement::create([
+            'copy_id' => $copy->copy_id,
+            'reason' => $validated['reason'],
+            'retired_by' => auth()->id() ?: 1, // Fallback to user_id 1 (Admin)
+            'retired_date' => $validated['retired_date'],
+            'note' => $validated['note'] ?: ''
+        ]);
+
+        return response()->json([
+            'message' => 'Thanh lý bản sao thành công!',
+            'data' => [
+                'copy_id' => $copy->copy_id,
+                'barcode' => $copy->barcode,
+                'status' => 'liquidated'
+            ]
         ]);
     }
 }
