@@ -808,8 +808,8 @@ class ExportController extends Controller
             fputcsv($file, ['Mã đặt trước', 'Độc giả', 'Email độc giả', 'Tên sách', 'Giờ đặt', 'Hàng chờ', 'Trạng thái']);
             foreach ($details['reservations'] as $r) {
                 $statusLabel = match($r['status']) {
-                    'waiting' => 'Đang chờ',
-                    'ready' => 'Sẵn sàng',
+                    'pending' => 'Đang chờ',
+                    'ready_for_pickup' => 'Sẵn sàng nhận',
                     'completed' => 'Đã nhận',
                     'cancelled' => 'Đã hủy',
                     'expired' => 'Hết hạn',

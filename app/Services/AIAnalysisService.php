@@ -145,20 +145,23 @@ class AIAnalysisService
                 $msg     = $result['message'] ?? '';
 
                 if ($success) {
-                    $pos   = (int) ($result['queue_position'] ?? 1);
-                    $resId = (int) ($result['reservation_id'] ?? 0);
-                    $text  = "[MOCK] Đặt trước sách **{$title}** thành công!"
-                           . " Bạn đang ở vị trí **{$pos}** trong hàng chờ."
-                           . ' Chúng tôi sẽ thông báo khi sách sẵn sàng để mượn.'
-                           . ($resId > 0 ? " (Mã đặt trước: #{$resId})" : '');
+                    $resId      = (int) ($result['reservation_id'] ?? 0);
+                    $pickupType = $result['pickup_type'] ?? 'online';
+                    if ($pickupType === 'counter') {
+                        $text = "[MOCK] Đặt sách **{$title}** thành công! Sách hiện có sẵn, vui lòng đến quầy thư viện để nhận sách."
+                              . ($resId > 0 ? " (Mã đặt trước: #{$resId})" : '');
+                    } else {
+                        $pos  = (int) ($result['queue_position'] ?? 1);
+                        $text = "[MOCK] Đặt trước sách **{$title}** thành công!"
+                               . " Bạn đang ở vị trí **{$pos}** trong hàng chờ."
+                               . ' Chúng tôi sẽ thông báo khi sách sẵn sàng để mượn.'
+                               . ($resId > 0 ? " (Mã đặt trước: #{$resId})" : '');
+                    }
                 } elseif ($error === 'already_reserved') {
                     $pos  = (int) ($result['queue_position'] ?? 0);
                     $text = "[MOCK] Bạn đã đặt trước sách **{$title}** rồi"
                           . ($pos > 0 ? " (vị trí {$pos} trong hàng chờ)" : '')
                           . '. Vui lòng chờ thông báo khi sách sẵn sàng.';
-                } elseif ($error === 'book_available') {
-                    $copies = (int) ($result['available_copies'] ?? 0);
-                    $text   = "[MOCK] Sách **{$title}** hiện còn {$copies} bản có thể mượn trực tiếp tại quầy — bạn không cần đặt trước!";
                 } elseif ($error === 'requires_auth') {
                     $text = '[MOCK] Bạn cần đăng nhập để sử dụng chức năng đặt trước sách.';
                 } else {

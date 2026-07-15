@@ -27,8 +27,8 @@ class WeeklySummaryService
             ->join('books as b', 'b.book_id', '=', 'bc.book_id')
             ->where('bt.user_id', $user->user_id)
             ->whereNull('bd.return_date')
-            ->select(['bt.due_date', 'b.title'])
-            ->orderBy('bt.due_date', 'asc')
+            ->select([DB::raw('COALESCE(bd.renewed_due_date, bt.due_date) as due_date'), 'b.title'])
+            ->orderBy(DB::raw('COALESCE(bd.renewed_due_date, bt.due_date)'), 'asc')
             ->get();
 
         $borrowedCount = $borrowRows->count();

@@ -8,7 +8,6 @@ use Illuminate\Http\Request;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\ReturnBookRequest;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Mail;
 
 
 class ReturnController extends Controller
@@ -58,7 +57,7 @@ class ReturnController extends Controller
                     JOIN borrow_transactions bt ON bt.borrow_id = bd.borrow_id
                     WHERE bt.user_id = u.user_id
                       AND bd.return_date IS NULL
-                      AND bt.due_date < CURDATE()
+                      AND COALESCE(bd.renewed_due_date, bt.due_date) < CURDATE()
                     LIMIT 1
                 ) AS has_overdue'),
             ])
@@ -119,7 +118,7 @@ class ReturnController extends Controller
                     ->join('borrow_transactions as bt', 'bt.borrow_id', '=', 'bd.borrow_id')
                     ->whereIn('bd.copy_id', $copyIds)
                     ->whereNull('bd.return_date')
-                    ->select('bd.copy_id', 'bd.borrow_id', 'bt.user_id', 'bt.due_date')
+                    ->select('bd.copy_id', 'bd.borrow_id', 'bd.renewed_due_date', 'bt.user_id', 'bt.due_date')
                     ->lockForUpdate()
                     ->get();
 
@@ -157,7 +156,7 @@ class ReturnController extends Controller
                 // [6] UPDATE borrow_transactions status
                 $closedTransactions = [];
                 foreach ($borrowGroups as $borrowId => $group) {
-                    $due      = Carbon::parse($group->first()->due_date)->startOfDay();
+                    $due      = Carbon::parse($group->first()->renewed_due_date ?? $group->first()->due_date)->startOfDay();
                     $leftover = (int) ($remainingMap->get($borrowId) ?? 0);
 
                     if ($leftover === 0) {
@@ -185,10 +184,10 @@ class ReturnController extends Controller
 
                 $totalPenalty = 0;
                 $fineInserts  = [];
-                $fineUpdates  = [];  // [fine_id => new_amount]
+                $fineUpdates  = [];  // [fine_id => ['amount' => ..., 'reason' => ...]]
 
                 foreach ($details as $detail) {
-                    $overdueDays = $this->calculateOverdueDays($detail->due_date, $today);
+                    $overdueDays = $this->calculateOverdueDays($detail->renewed_due_date ?? $detail->due_date, $today);
                     if ($overdueDays === 0) continue;
 
                     $fineAmt       = $overdueDays * $finePerDay;
@@ -196,16 +195,37 @@ class ReturnController extends Controller
 
                     $key      = $detail->borrow_id . '-' . $detail->copy_id;
                     $existing = $existingFines->get($key);
+                    // Chỉ coi là "cùng một khoản phí trễ hạn cần cập nhật" nếu fine sẵn có
+                    // cũng là phí trễ hạn (reason chứa "trễ"/"quá hạn") — tránh trường hợp
+                    // hiếm gặp: copy đã có sẵn 1 fine hỏng/mất (unpaid) trùng borrow_id+copy_id,
+                    // không được ghi đè/biến nó thành phí trễ hạn.
+                    $existingIsLate = $existing && (
+                        str_contains($existing->reason, 'trễ') || str_contains($existing->reason, 'quá hạn')
+                    );
 
-                    if ($existing) {
-                        $fineUpdates[$existing->fine_id] = (int) $existing->amount + $fineAmt;
+                    // reason phản ánh đúng số ngày đã chốt (VD "Trả trễ 867 ngày") — để
+                    // reason không còn lệch với amount/số ngày thực tế (đúng nguồn gây audit
+                    // trước đó, tránh trường hợp reason cũ "Trả trễ 1 ngày" nhưng amount đã
+                    // được chốt theo hàng trăm ngày).
+                    $chargedReason = "Trả trễ {$overdueDays} ngày";
+
+                    if ($existingIsLate) {
+                        // KHÔNG cộng dồn "existing->amount + fineAmt" (bug cũ từng khiến
+                        // fine_id=43 tăng 20.000đ -> 4.305.000đ vì có sẵn 1 fine unpaid cho
+                        // cùng borrow_id+copy_id). Nguồn sự thật cho khoản phí trễ hạn của
+                        // LƯỢT TRẢ SÁCH này là overdueDays vừa tính (due_date thật -> hôm nay,
+                        // tức return_date) — ghi đè bằng giá trị mới.
+                        $fineUpdates[$existing->fine_id] = [
+                            'amount' => $fineAmt,
+                            'reason' => $chargedReason,
+                        ];
                     } else {
                         $fineInserts[] = [
                             'user_id'    => $userId,
                             'borrow_id'  => (int) $detail->borrow_id,
                             'copy_id'    => (int) $detail->copy_id,
                             'amount'     => $fineAmt,
-                            'reason'     => 'Trả sách quá hạn',
+                            'reason'     => $chargedReason,
                             'status'     => 'unpaid',
                             'created_at' => now(),
                         ];
@@ -224,8 +244,8 @@ class ReturnController extends Controller
 
                     DB::table('fines')->insert($fineInserts);
                 }
-                foreach ($fineUpdates as $fineId => $newAmount) {
-                    DB::table('fines')->where('fine_id', $fineId)->update(['amount' => $newAmount]);
+                foreach ($fineUpdates as $fineId => $update) {
+                    DB::table('fines')->where('fine_id', $fineId)->update($update);
                 }
                     Notification::create([
                         'user_id' => $userId,
@@ -234,69 +254,13 @@ class ReturnController extends Controller
                         'type' => 'return',
                         'is_read' => 0,
                     ]);
-                                foreach ($copyIds as $copyId) {
 
-                $bookId = DB::table('book_copies')
-                    ->where('copy_id', $copyId)
-                    ->value('book_id');
+                // Bản sao vừa trả chỉ đơn giản chuyển về 'available' (đã UPDATE ở bước [4]).
+                // Việc gán bản sao này cho reservation đang chờ (nếu có) giờ là thao tác thủ công
+                // của thủ thư qua nút "Xác nhận có sách" trên màn hình Reservation
+                // (Admin\ReservationController::markReady), không còn tự động ở đây nữa —
+                // tránh khóa nhầm bản sao cho một reservation mà thủ thư chưa chủ động xác nhận.
 
-                // Select the first waiting reservation for this book, but skip
-                // the user who is returning the copy (they shouldn't be notified).
-                // Lock the row to avoid race conditions when multiple returns
-                // happen concurrently.
-                $reservation = DB::table('reservations')
-                    ->where('book_id', $bookId)
-                    ->where('status', 'waiting')
-                    ->where('user_id', '<>', $userId)
-                    ->orderBy('queue_position')
-                    ->lockForUpdate()
-                    ->first();
-
-                if (!$reservation) {
-                    continue;
-                }
-
-                DB::table('reservations')
-                    ->where('reservation_id', $reservation->reservation_id)
-                    ->update([
-                        'status' => 'ready',
-                        'notified_at' => now(),
-                        'expired_at' => now()->addDays(2),
-                    ]);
-
-                $user = DB::table('users')
-                    ->where('user_id', $reservation->user_id)
-                    ->first();
-
-                $book = DB::table('books')
-                    ->where('book_id', $bookId)
-                    ->first();
-
-                if ($user && $user->email) {
-                    $notifiedAt = now();
-                    $expiresAt  = now()->addDays(2);
-
-                    try {
-                        \Mail::to($user->email)->send(new \App\Mail\ReservationAvailableMail(
-                            $user->full_name,
-                            $book->title,
-                            config('app.name', 'Thư viện'),
-                            $notifiedAt->toDateTimeString(),
-                            $expiresAt->toDateTimeString()
-                        ));
-                    } catch (\Throwable $e) {
-                        // swallow mail errors to avoid breaking return flow; notification still created
-                    }
-
-                    Notification::create([
-                        'user_id' => $reservation->user_id,
-                        'title' => 'Sách đặt trước đã có sẵn',
-                        'content' => "Sách \"{$book->title}\" đã có sẵn. Vui lòng đến nhận trong vòng 2 ngày.",
-                        'type' => 'reservation',
-                        'is_read' => 0,
-                    ]);
-                }
-            }
                 return [
                     'return_date'          => $today->toDateString(),
                     'returned_books_count' => count($copyIds),
@@ -358,6 +322,7 @@ class ReturnController extends Controller
                 'bc.barcode',
                 'b.title',
                 'bd.borrow_id',
+                'bd.renewed_due_date',
                 'bt.due_date',
                 'bt.user_id as borrower_id',
             ])
@@ -392,8 +357,9 @@ class ReturnController extends Controller
             ->where('config_key', 'fine_per_day')
             ->value('config_value');
 
-        $today       = Carbon::today();
-        $overdueDays = $this->calculateOverdueDays($row->due_date, $today);
+        $today          = Carbon::today();
+        $effectiveDue   = $row->renewed_due_date ?? $row->due_date;
+        $overdueDays    = $this->calculateOverdueDays($effectiveDue, $today);
 
         return response()->json([
             'code'    => 200,
@@ -403,7 +369,7 @@ class ReturnController extends Controller
                     'barcode'      => $row->barcode,
                     'title'        => $row->title,
                     'borrow_id'    => $row->borrow_id,
-                    'due_date'     => $row->due_date,
+                    'due_date'     => $effectiveDue,
                     'overdue_days' => $overdueDays,
                     'penalty_fee'  => $overdueDays * $finePerDay,
                 ],
@@ -454,11 +420,12 @@ class ReturnController extends Controller
                 'bt.due_date',
                 'bd.copy_id',
                 'bd.renew_count',
+                'bd.renewed_due_date',
                 'bc.barcode',
                 'bc.book_id',
                 'b.title',
             ])
-            ->orderBy('bt.due_date', 'asc')
+            ->orderBy(DB::raw('COALESCE(bd.renewed_due_date, bt.due_date)'), 'asc')
             ->orderBy('bt.borrow_id', 'asc')
             ->get();
 
@@ -476,8 +443,9 @@ class ReturnController extends Controller
         $today = Carbon::today();
 
         $results = $rows->map(function ($row) use ($finePerDay, $maxRenewTimes, $reservedBookIds, $today) {
-            $overdueDays = $this->calculateOverdueDays($row->due_date, $today);
-            $renewCount  = (int) $row->renew_count;
+            $effectiveDue = $row->renewed_due_date ?? $row->due_date;
+            $overdueDays  = $this->calculateOverdueDays($effectiveDue, $today);
+            $renewCount   = (int) $row->renew_count;
 
             return [
                 'borrow_id'    => $row->borrow_id,
@@ -485,7 +453,7 @@ class ReturnController extends Controller
                 'barcode'      => $row->barcode,
                 'title'        => $row->title,
                 'borrow_date'  => $row->borrow_date,
-                'due_date'     => $row->due_date,
+                'due_date'     => $effectiveDue,
                 'overdue_days' => $overdueDays,
                 'penalty_fee'  => $overdueDays * $finePerDay,
                 'renew_count'  => $renewCount,
@@ -502,20 +470,13 @@ class ReturnController extends Controller
         ]);
     }
 
+    // Delegate sang OverdueCalculator — nguồn sự thật DUY NHẤT cho "số ngày quá hạn" trong
+    // toàn hệ thống (đã xác nhận với người dùng: một công thức chung, KHÔNG loại trừ ngày
+    // nghỉ, áp dụng thống nhất cho BorrowingController/FineController/ReturnController/
+    // FineService/backfill command). Trước đây hàm này tự trừ ngày nghỉ riêng — bỏ để
+    // tránh duy trì công thức thứ hai khác với "Đang mượn"/"Lịch sử phí".
     private function calculateOverdueDays(string $dueDateStr, \Carbon\Carbon $today): int
     {
-        $due = \Carbon\Carbon::parse($dueDateStr)->startOfDay();
-        $overdueDays = $today->gt($due) ? (int) $today->diffInDays($due, true) : 0;
-
-        if ($overdueDays > 0) {
-            $holidayCount = DB::table('holidays')
-                ->where('holiday_date', '>', $due->toDateString())
-                ->where('holiday_date', '<=', $today->toDateString())
-                ->count();
-
-            $overdueDays = max(0, $overdueDays - $holidayCount);
-        }
-
-        return $overdueDays;
+        return \App\Services\OverdueCalculator::daysLate($dueDateStr, $today->toDateString());
     }
 }

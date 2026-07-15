@@ -4,7 +4,7 @@ namespace App\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
 
-class ConfirmReservationRequest extends FormRequest
+class MarkReadyRequest extends FormRequest
 {
     public function authorize(): bool
     {
@@ -15,10 +15,6 @@ class ConfirmReservationRequest extends FormRequest
     {
         return [
             'reservation_id' => ['required', 'integer', 'exists:reservations,reservation_id'],
-            // copy_id chỉ bắt buộc khi reservation đang pending+counter (chưa có copy gán sẵn).
-            // Với ready_for_pickup, copy đã được khóa từ bước mark-ready nên copy_id là tùy chọn
-            // — validate theo nhánh nghiệp vụ được thực hiện trong ReservationController::confirmReservation.
-            'copy_id'        => ['nullable', 'integer', 'exists:book_copies,copy_id'],
         ];
     }
 
@@ -27,7 +23,6 @@ class ConfirmReservationRequest extends FormRequest
         return [
             'reservation_id.required' => 'Vui lòng chọn phiếu đặt trước.',
             'reservation_id.exists'   => 'Phiếu đặt trước không tồn tại.',
-            'copy_id.exists'          => 'Bản sao không tồn tại.',
         ];
     }
 }

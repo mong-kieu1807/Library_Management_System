@@ -143,11 +143,13 @@ class UserController extends Controller
             'phone' => 'nullable|string|max:20',
             'address' => 'nullable|string|max:255',
             'avatar' => 'nullable|string|max:255',
+        ], [
+            'email.unique' => 'Độc giả này đã tồn tại (email đã được sử dụng).',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
-                'message' => 'Dữ liệu đầu vào không hợp lệ.',
+                'message' => $validator->errors()->first(),
                 'errors' => $validator->errors()
             ], 422);
         }
@@ -257,11 +259,13 @@ class UserController extends Controller
             'phone' => 'nullable|string|max:20',
             'address' => 'nullable|string|max:255',
             'avatar' => 'nullable|string|max:255',
+        ], [
+            'email.unique' => 'Email này đã được sử dụng bởi độc giả khác.',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
-                'message' => 'Dữ liệu cập nhật không hợp lệ.',
+                'message' => $validator->errors()->first(),
                 'errors' => $validator->errors()
             ], 422);
         }

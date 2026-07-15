@@ -32,11 +32,18 @@ class ReportService
             ->where('status', 'borrowing')
             ->count();
 
-        // Quá hạn: borrowing + due_date đã qua hôm nay
-        $overdue = DB::table('borrow_transactions')
-            ->where('status', 'borrowing')
-            ->whereDate('due_date', '<', Carbon::today()->toDateString())
-            ->count();
+        // Quá hạn: đếm số giao dịch (distinct borrow_id) có ít nhất 1 bản sao
+        // chưa trả và đã qua hạn trả hiệu lực (COALESCE renewed_due_date, due_date) —
+        // due_date gốc dùng chung cả giao dịch nên phải join borrow_details để biết
+        // đúng hạn trả riêng của từng sách sau khi gia hạn.
+        $overdue = DB::table('borrow_transactions as bt')
+            ->join('borrow_details as bd', function ($j) {
+                $j->on('bd.borrow_id', '=', 'bt.borrow_id')->whereNull('bd.return_date');
+            })
+            ->where('bt.status', 'borrowing')
+            ->whereRaw('COALESCE(bd.renewed_due_date, bt.due_date) < ?', [Carbon::today()->toDateString()])
+            ->distinct()
+            ->count('bt.borrow_id');
 
         // ── 2. Chart: aggregate theo period ──────────────────────────────────
 
@@ -417,28 +424,28 @@ class ReportService
             ->join('book_copies as bc',  'bc.copy_id',   '=', 'bd.copy_id')
             ->join('books as b',         'b.book_id',    '=', 'bc.book_id')
             ->where('bt.status', 'borrowing')
-            ->whereRaw('bt.due_date < CURDATE()')
+            ->whereRaw('COALESCE(bd.renewed_due_date, bt.due_date) < CURDATE()')
             ->whereNull('bd.return_date')
-            ->when($fromDate, fn ($q) => $q->where('bt.due_date', '>=', $fromDate))
-            ->when($toDate,   fn ($q) => $q->where('bt.due_date', '<=', $toDate))
-            ->when($status === 'low',    fn ($q) => $q->whereRaw('DATEDIFF(CURDATE(), bt.due_date) BETWEEN 1 AND 7'))
-            ->when($status === 'medium', fn ($q) => $q->whereRaw('DATEDIFF(CURDATE(), bt.due_date) BETWEEN 8 AND 30'))
-            ->when($status === 'high',   fn ($q) => $q->whereRaw('DATEDIFF(CURDATE(), bt.due_date) > 30'))
+            ->when($fromDate, fn ($q) => $q->whereRaw('COALESCE(bd.renewed_due_date, bt.due_date) >= ?', [$fromDate]))
+            ->when($toDate,   fn ($q) => $q->whereRaw('COALESCE(bd.renewed_due_date, bt.due_date) <= ?', [$toDate]))
+            ->when($status === 'low',    fn ($q) => $q->whereRaw('DATEDIFF(CURDATE(), COALESCE(bd.renewed_due_date, bt.due_date)) BETWEEN 1 AND 7'))
+            ->when($status === 'medium', fn ($q) => $q->whereRaw('DATEDIFF(CURDATE(), COALESCE(bd.renewed_due_date, bt.due_date)) BETWEEN 8 AND 30'))
+            ->when($status === 'high',   fn ($q) => $q->whereRaw('DATEDIFF(CURDATE(), COALESCE(bd.renewed_due_date, bt.due_date)) > 30'))
             ->select([
                 'bt.borrow_id',
                 'u.full_name as reader_name',
                 'u.email as reader_email',
                 'b.title as book_title',
-                'bt.due_date',
-                DB::raw('DATEDIFF(CURDATE(), bt.due_date) AS overdue_days'),
+                DB::raw('COALESCE(bd.renewed_due_date, bt.due_date) as due_date'),
+                DB::raw('DATEDIFF(CURDATE(), COALESCE(bd.renewed_due_date, bt.due_date)) AS overdue_days'),
                 DB::raw("CASE
-                    WHEN DATEDIFF(CURDATE(), bt.due_date) BETWEEN 1 AND 7  THEN 'low'
-                    WHEN DATEDIFF(CURDATE(), bt.due_date) BETWEEN 8 AND 30 THEN 'medium'
+                    WHEN DATEDIFF(CURDATE(), COALESCE(bd.renewed_due_date, bt.due_date)) BETWEEN 1 AND 7  THEN 'low'
+                    WHEN DATEDIFF(CURDATE(), COALESCE(bd.renewed_due_date, bt.due_date)) BETWEEN 8 AND 30 THEN 'medium'
                     ELSE 'high'
                 END AS status"),
                 DB::raw('(SELECT COALESCE(SUM(f.amount), 0) FROM fines f WHERE f.borrow_id = bt.borrow_id AND f.copy_id = bd.copy_id) AS fine_amount'),
             ])
-            ->orderByRaw('DATEDIFF(CURDATE(), bt.due_date) DESC')
+            ->orderByRaw('DATEDIFF(CURDATE(), COALESCE(bd.renewed_due_date, bt.due_date)) DESC')
             ->get();
 
         return $rows->map(fn ($row) => [
@@ -468,13 +475,19 @@ class ReportService
      */
     public function getOverdueSummary(): array
     {
+        // Đếm theo bản sao (borrow_details) chưa trả, không theo giao dịch — vì hạn trả
+        // hiệu lực (COALESCE renewed_due_date, due_date) giờ là khái niệm theo từng sách,
+        // 1 giao dịch có thể có sách quá hạn và sách đã gia hạn còn hạn cùng lúc.
         $rows = DB::table('borrow_transactions as bt')
+            ->join('borrow_details as bd', function ($j) {
+                $j->on('bd.borrow_id', '=', 'bt.borrow_id')->whereNull('bd.return_date');
+            })
             ->where('bt.status', 'borrowing')
-            ->whereRaw('bt.due_date < CURDATE()')
+            ->whereRaw('COALESCE(bd.renewed_due_date, bt.due_date) < CURDATE()')
             ->selectRaw("
                 CASE
-                    WHEN DATEDIFF(CURDATE(), bt.due_date) BETWEEN 1 AND 7  THEN '1-7'
-                    WHEN DATEDIFF(CURDATE(), bt.due_date) BETWEEN 8 AND 30 THEN '8-30'
+                    WHEN DATEDIFF(CURDATE(), COALESCE(bd.renewed_due_date, bt.due_date)) BETWEEN 1 AND 7  THEN '1-7'
+                    WHEN DATEDIFF(CURDATE(), COALESCE(bd.renewed_due_date, bt.due_date)) BETWEEN 8 AND 30 THEN '8-30'
                     ELSE '30+'
                 END AS range_key,
                 COUNT(*) AS cnt

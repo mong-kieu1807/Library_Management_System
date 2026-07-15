@@ -194,6 +194,7 @@ class ReaderManagementController extends Controller
                 'borrow_details.return_date',
                 'borrow_details.condition_return',
                 'borrow_details.renew_count',
+                'borrow_details.renewed_due_date',
                 DB::raw('COALESCE(f.amount, 0) as fine_amount'),
                 DB::raw('f.status as fine_status')
             )
@@ -206,7 +207,7 @@ class ReaderManagementController extends Controller
             return [
                 'borrow_id'        => $row->borrow_id,
                 'borrow_date'      => $row->borrow_date,
-                'due_date'         => $row->due_date,
+                'due_date'         => $row->renewed_due_date ?? $row->due_date,
                 'status'           => $row->transaction_status,
                 'librarian_name'   => $row->librarian_name,
                 'book_title'       => $row->book_title,

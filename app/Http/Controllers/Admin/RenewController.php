@@ -7,7 +7,6 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\RenewBookRequest;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use App\Models\Notification;
 
 class RenewController extends Controller
 {
@@ -23,9 +22,9 @@ class RenewController extends Controller
         $maxRenewTimes = (int) DB::table('system_settings')
             ->where('config_key', 'max_renew_times')->value('config_value') ?: 2;
 
-        // Lấy các book_id đang có reservation waiting
+        // Lấy các book_id đang có reservation active
         $reservedBookIds = DB::table('reservations')
-            ->whereIn('status', ['waiting', 'ready'])
+            ->whereIn('status', ['pending', 'ready_for_pickup'])
             ->pluck('book_id')
             ->unique()
             ->toArray();
@@ -33,7 +32,14 @@ class RenewController extends Controller
         $rows = DB::table('borrow_renewal_requests as brr')
             ->join('borrow_transactions as bt', 'bt.borrow_id', '=', 'brr.borrow_id')
             ->join('borrow_details as bd', function ($j) {
-                $j->on('bd.borrow_id', '=', 'bt.borrow_id')->whereNull('bd.return_date');
+                // copy_id khớp đúng bản sao được yêu cầu; brr.copy_id NULL (request cũ
+                // trước khi có cột này) fallback áp dụng cho cả giao dịch.
+                $j->on('bd.borrow_id', '=', 'bt.borrow_id')
+                  ->whereNull('bd.return_date')
+                  ->where(function ($jj) {
+                      $jj->whereColumn('bd.copy_id', '=', 'brr.copy_id')
+                         ->orWhereNull('brr.copy_id');
+                  });
             })
             ->join('book_copies as bc', 'bc.copy_id', '=', 'bd.copy_id')
             ->join('books as b', 'b.book_id', '=', 'bc.book_id')
@@ -42,7 +48,8 @@ class RenewController extends Controller
             ->where('brr.status', 'pending')
             ->select([
                 'brr.request_id',
-                'bt.borrow_id', 'bt.user_id', 'bt.borrow_date', 'bt.due_date',
+                'bt.borrow_id', 'bt.user_id', 'bt.borrow_date',
+                DB::raw('COALESCE(bd.renewed_due_date, bt.due_date) as due_date'),
                 'bd.copy_id', 'bd.renew_count',
                 'bc.barcode', 'bc.book_id',
                 'b.title',
@@ -78,14 +85,6 @@ class RenewController extends Controller
                 ];
             });
 
-Notification::create([
-    'user_id' => $userId,
-    'title' => 'Gia hạn thành công',
-    'content' => "Bạn đã gia hạn thành công " . count($copyIds) . " cuốn sách.",
-    'type' => 'renew',
-    'is_read' => 0,
-]);
-
         return response()->json([
             'code'    => 200,
             'results' => ['objects' => $rows, 'meta' => ['max_renew_times' => $maxRenewTimes]],
@@ -105,8 +104,10 @@ Notification::create([
      *   2. lockForUpdate borrow_details + borrow_transactions + book_copies
      *   3. Safety validate: ownership, return_date IS NULL, renew_count, reservation
      *   4. INCREMENT borrow_details.renew_count (bulk, 1 query)
-     *   5. UPDATE borrow_transactions.due_date += extend_days (per borrow_id)
-     *   6. Mark pending borrow_renewal_requests approved + tạo notification
+     *   5. UPDATE borrow_details.renewed_due_date += extend_days (per copy_id — không
+     *      đụng borrow_transactions.due_date, vì cột đó dùng chung cho cả giao dịch
+     *      và có thể có nhiều sách khác chưa được duyệt gia hạn)
+     *   6. Mark pending borrow_renewal_requests approved (đúng copy_id) + tạo notification
      */
     public function renewBook(RenewBookRequest $request)
     {
@@ -128,7 +129,7 @@ Notification::create([
                     ->join('book_copies as bc', 'bc.copy_id', '=', 'bd.copy_id')
                     ->whereIn('bd.copy_id', $copyIds)
                     ->whereNull('bd.return_date')
-                    ->select('bd.copy_id', 'bd.borrow_id', 'bd.renew_count', 'bt.user_id', 'bt.due_date', 'bc.book_id')
+                    ->select('bd.copy_id', 'bd.borrow_id', 'bd.renew_count', 'bd.renewed_due_date', 'bt.user_id', 'bt.due_date', 'bc.book_id')
                     ->lockForUpdate()
                     ->get();
 
@@ -151,7 +152,7 @@ Notification::create([
                 $bookIds = $details->pluck('book_id')->unique()->toArray();
                 $hasReservation = DB::table('reservations')
                     ->whereIn('book_id', $bookIds)
-                    ->where('status', 'waiting')
+                    ->where('status', 'pending')
                     ->exists();
                 if ($hasReservation) {
                     throw new \RuntimeException('RESERVATION:active reservation');
@@ -163,38 +164,46 @@ Notification::create([
                     ->whereNull('return_date')
                     ->increment('renew_count');
 
-                // [4] UPDATE due_date per unique borrow_transaction
-                $borrowGroups        = $details->groupBy('borrow_id');
-                $renewedTransactions = [];
+                // [4] UPDATE renewed_due_date per bản sao — chỉ đúng copy_id được duyệt,
+                // không đụng đến sách khác cùng giao dịch (borrow_id).
+                $renewedCopies = [];
 
-                foreach ($borrowGroups as $borrowId => $group) {
-                    $currentDue = Carbon::parse($group->first()->due_date)->startOfDay();
+                foreach ($details as $detail) {
+                    $currentDue = Carbon::parse($detail->renewed_due_date ?? $detail->due_date)->startOfDay();
                     $newDue     = $currentDue->addDays($extendDays);
 
-                    DB::table('borrow_transactions')
-                        ->where('borrow_id', (int) $borrowId)
+                    DB::table('borrow_details')
+                        ->where('borrow_id', (int) $detail->borrow_id)
+                        ->where('copy_id', (int) $detail->copy_id)
                         ->update([
-                            'due_date'   => $newDue->toDateString(),
-                            'updated_at' => now(),
+                            'renewed_due_date' => $newDue->toDateString(),
                         ]);
 
-                    $renewedTransactions[] = [
-                        'borrow_id'    => (int) $borrowId,
+                    $renewedCopies[] = [
+                        'borrow_id'    => (int) $detail->borrow_id,
+                        'copy_id'      => (int) $detail->copy_id,
                         'new_due_date' => $newDue->toDateString(),
                     ];
 
-                    // [5] Nếu có borrow_renewal_request đang pending khớp giao dịch này
+                    // [5] Nếu có borrow_renewal_request đang pending khớp đúng bản sao này
                     // (Reader đã gửi yêu cầu gia hạn) → duyệt luôn + tạo notification.
-                    // [5] Mark pending borrow_renewal_request approved + tạo notification
+                    // copy_id NULL = request cũ trước khi có cột này -> fallback theo borrow_id.
+                    // lockForUpdate + re-check status: tránh race với Reader hủy yêu cầu
+                    // cùng lúc admin renew trực tiếp tại quầy.
                     $pendingRequest = DB::table('borrow_renewal_requests')
-                        ->where('borrow_id', (int) $borrowId)
+                        ->where('borrow_id', (int) $detail->borrow_id)
                         ->where('user_id', $userId)
                         ->where('status', 'pending')
+                        ->where(function ($q) use ($detail) {
+                            $q->where('copy_id', (int) $detail->copy_id)->orWhereNull('copy_id');
+                        })
+                        ->lockForUpdate()
                         ->first();
 
                     if ($pendingRequest) {
                         DB::table('borrow_renewal_requests')
                             ->where('request_id', $pendingRequest->request_id)
+                            ->where('status', 'pending')
                             ->update([
                                 'status'      => 'approved',
                                 'reviewed_by' => $adminId,
@@ -214,9 +223,9 @@ Notification::create([
                 }
 
                 return [
-                    'extended_books'        => count($copyIds),
-                    'extend_days'           => $extendDays,
-                    'renewed_transactions'  => $renewedTransactions,
+                    'extended_books'       => count($copyIds),
+                    'extend_days'          => $extendDays,
+                    'renewed_transactions' => $renewedCopies,
                 ];
             });
 
@@ -255,43 +264,50 @@ Notification::create([
      *
      * Admin từ chối yêu cầu gia hạn sách (id = borrow_renewal_requests.request_id).
      * KHÔNG đụng due_date / renew_count — chỉ cập nhật request + tạo notification.
+     *
+     * lockForUpdate + re-check status BÊN TRONG transaction để tránh race với
+     * Reader hủy yêu cầu cùng lúc — chỉ một thao tác được thắng.
      */
     public function rejectBook(Request $request, int $id)
     {
-        $adminId = auth()->id();
+        $adminId    = auth()->id();
+        $reviewNote = $request->input('review_note', 'Yêu cầu bị từ chối.');
 
-        $renewRequest = DB::table('borrow_renewal_requests')
-            ->where('request_id', $id)
-            ->where('status', 'pending')
-            ->first();
+        try {
+            DB::transaction(function () use ($id, $adminId, $reviewNote) {
+                $renewRequest = DB::table('borrow_renewal_requests')
+                    ->where('request_id', $id)
+                    ->lockForUpdate()
+                    ->first();
 
-        if (!$renewRequest) {
+                if (!$renewRequest || $renewRequest->status !== 'pending') {
+                    throw new \RuntimeException('NOT_PENDING');
+                }
+
+                DB::table('borrow_renewal_requests')
+                    ->where('request_id', $renewRequest->request_id)
+                    ->where('status', 'pending')
+                    ->update([
+                        'status'      => 'rejected',
+                        'reviewed_by' => $adminId,
+                        'review_note' => $reviewNote,
+                    ]);
+
+                DB::table('notifications')->insert([
+                    'user_id'    => $renewRequest->user_id,
+                    'title'      => 'Yêu cầu gia hạn sách bị từ chối',
+                    'content'    => 'Yêu cầu gia hạn sách của bạn đã bị từ chối. Lý do: ' . $reviewNote,
+                    'type'       => 'borrow_renewal',
+                    'is_read'    => 0,
+                    'created_at' => now(),
+                ]);
+            });
+        } catch (\RuntimeException $e) {
             return response()->json([
                 'code'    => 404,
                 'message' => 'Yêu cầu không tồn tại hoặc đã được xử lý.',
             ], 404);
         }
-
-        $reviewNote = $request->input('review_note', 'Yêu cầu bị từ chối.');
-
-        DB::transaction(function () use ($renewRequest, $adminId, $reviewNote) {
-            DB::table('borrow_renewal_requests')
-                ->where('request_id', $renewRequest->request_id)
-                ->update([
-                    'status'      => 'rejected',
-                    'reviewed_by' => $adminId,
-                    'review_note' => $reviewNote,
-                ]);
-
-            DB::table('notifications')->insert([
-                'user_id'    => $renewRequest->user_id,
-                'title'      => 'Yêu cầu gia hạn sách bị từ chối',
-                'content'    => 'Yêu cầu gia hạn sách của bạn đã bị từ chối. Lý do: ' . $reviewNote,
-                'type'       => 'borrow_renewal',
-                'is_read'    => 0,
-                'created_at' => now(),
-            ]);
-        });
 
         return response()->json([
             'code'    => 200,

@@ -18,23 +18,11 @@ class ReservationController extends Controller
 
     $bookId = $request->book_id;
 
-    // Kiểm tra còn bản sao available không
-    $availableCopies = DB::table('book_copies')
-        ->where('book_id', $bookId)
-        ->where('status', 'available')
-        ->count();
-
-    if ($availableCopies > 0) {
-        return response()->json([
-            'message' => 'Sách vẫn còn bản sao khả dụng, không cần đặt trước.'
-        ], 422);
-    }
-
     // Kiểm tra đã đặt trước chưa
     $exists = DB::table('reservations')
         ->where('user_id', $userId)
         ->where('book_id', $bookId)
-        ->whereIn('status', ['waiting', 'ready'])
+        ->whereIn('status', ['pending', 'ready_for_pickup'])
         ->exists();
 
     if ($exists) {
@@ -43,24 +31,39 @@ class ReservationController extends Controller
         ], 422);
     }
 
-    // FIFO
-    $queuePosition =
-        DB::table('reservations')
+    // pickup_type theo tồn kho hiện tại: còn bản available -> counter (đặt tại quầy),
+    // hết bản -> online (xếp hàng chờ FIFO)
+    $availableCopies = DB::table('book_copies')
+        ->where('book_id', $bookId)
+        ->where('status', 'available')
+        ->count();
+
+    $pickupType = $availableCopies > 0 ? 'counter' : 'online';
+
+    $queuePosition = null;
+    if ($pickupType === 'online') {
+        $queuePosition = DB::table('reservations')
             ->where('book_id', $bookId)
-            ->whereIn('status', ['waiting', 'ready'])
+            ->where('status', 'pending')
+            ->where('pickup_type', 'online')
             ->count() + 1;
+    }
 
     $reservationId = DB::table('reservations')->insertGetId([
         'user_id' => $userId,
         'book_id' => $bookId,
+        'pickup_type' => $pickupType,
         'queue_position' => $queuePosition,
-        'status' => 'waiting',
+        'status' => 'pending',
         'created_at' => now(),
     ]);
 
     return response()->json([
-        'message' => 'Đặt trước thành công',
+        'message' => $pickupType === 'counter'
+            ? 'Đặt sách tại quầy thành công. Vui lòng đến thư viện để nhận sách.'
+            : 'Đặt trước thành công',
         'reservation_id' => $reservationId,
+        'pickup_type' => $pickupType,
         'queue_position' => $queuePosition,
     ], 201);
 }
@@ -79,7 +82,7 @@ class ReservationController extends Controller
             return response()->json(['message' => 'Không tìm thấy đặt trước.'], 404);
         }
 
-        if ($reservation->status !== 'waiting') {
+        if ($reservation->status !== 'pending') {
             return response()->json(['message' => 'Chỉ có thể hủy đặt trước đang ở trạng thái chờ.'], 422);
         }
 
@@ -88,11 +91,14 @@ class ReservationController extends Controller
                 ->where('reservation_id', $reservation->reservation_id)
                 ->update(['status' => 'cancelled']);
 
-            DB::table('reservations')
-                ->where('book_id', $reservation->book_id)
-                ->where('status', 'waiting')
-                ->where('queue_position', '>', $reservation->queue_position)
-                ->decrement('queue_position');
+            if ($reservation->pickup_type === 'online') {
+                DB::table('reservations')
+                    ->where('book_id', $reservation->book_id)
+                    ->where('status', 'pending')
+                    ->where('pickup_type', 'online')
+                    ->where('queue_position', '>', $reservation->queue_position)
+                    ->decrement('queue_position');
+            }
         });
 
         return response()->json(['message' => 'Hủy đặt trước thành công.']);
@@ -123,11 +129,15 @@ class ReservationController extends Controller
                 DB::raw("(SELECT COUNT(*)
                           FROM reservations
                           WHERE book_id = r.book_id
-                          AND status IN ('waiting', 'ready')) as total_queue"),
+                          AND status = 'pending' AND pickup_type = 'online') as total_queue"),
                 DB::raw("DATE_FORMAT(r.created_at, '%Y-%m-%d') as reserved_at"),
                 'r.status',
+                'r.pickup_type',
+                'r.copy_id',
                 'r.queue_position',
                 DB::raw("DATE_FORMAT(r.notified_at, '%Y-%m-%d') as notified_at"),
+                DB::raw("DATE_FORMAT(r.ready_at, '%Y-%m-%d') as ready_at"),
+                'r.pickup_deadline',
                 DB::raw("DATE_FORMAT(r.expired_at, '%Y-%m-%d') as expired_at"),
             ])
             ->orderByDesc('r.created_at')

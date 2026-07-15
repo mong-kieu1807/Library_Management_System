@@ -36,7 +36,8 @@ Route::prefix('v1/auth')->group(function () {
     Route::post('/login', [AuthController::class, 'login']);
     Route::post('/verify-2fa', [AuthController::class, 'verify2fa'])->middleware('auth:sanctum');
     Route::post('/logout', [AuthController::class, 'logout']);
-    Route::post('/forgot-password', [ForgotPasswordController::class, 'sendResetLink']);
+    Route::post('/forgot-password', [ForgotPasswordController::class, 'sendOtp']);
+    Route::post('/verify-forgot-password-otp', [ForgotPasswordController::class, 'verifyOtp']);
     Route::post('/reset-password', [ForgotPasswordController::class, 'resetPassword']);
     Route::get('/google',          [GoogleAuthController::class, 'redirect']);
     Route::get('/google/callback', [GoogleAuthController::class, 'callback']);
@@ -108,6 +109,7 @@ Route::middleware(['auth:sanctum', 'role:admin,librarian'])->group(function () {
     Route::post('v1/book-copies', [App\Http\Controllers\Admin\BookCopyController::class, 'store']);
     Route::put('v1/book-copies/{id}', [App\Http\Controllers\Admin\BookCopyController::class, 'update']);
     Route::delete('v1/book-copies/{id}', [App\Http\Controllers\Admin\BookCopyController::class, 'destroy']);
+    Route::post('v1/book-copies/liquidate', [App\Http\Controllers\Admin\BookCopyController::class, 'liquidate']);
     Route::post('v1/book-copies/import', [App\Http\Controllers\Admin\BookCopyController::class, 'importCopies']);
     Route::get('v1/book-copies/summary-report', [App\Http\Controllers\Admin\BookCopyController::class, 'summaryReport']);
 
@@ -145,10 +147,12 @@ Route::middleware('auth:sanctum')->prefix('v1/me')->group(function () {
     // Library Card renewal (M1.6)
     Route::post('/library-card/renewal-request', [LibraryCardController::class, 'submitRenewalRequest']);
     Route::get('/library-card/renewal-requests', [LibraryCardController::class, 'myRenewalRequests']);
+    Route::delete('/library-card/renewal-request/{id}', [LibraryCardController::class, 'cancelRenewalRequest']);
 
     Route::get('/borrowing', [BorrowingController::class, 'index']);
     Route::get('/borrowing/history', [BorrowingController::class, 'history']);
     Route::post('/borrowing/{borrowId}/renew', [BorrowingController::class, 'renew']);
+    Route::delete('/borrowing/{borrowId}/renew', [BorrowingController::class, 'cancelRenewal']);
     Route::get('/fines', [FineController::class, 'index']);
     Route::get('/wishlist',                 [WishlistController::class, 'index']);
     Route::post('/wishlist',                [WishlistController::class, 'store']);
@@ -220,6 +224,7 @@ Route::middleware(['auth:sanctum', 'role:admin,librarian'])->prefix('private/v1'
         Route::get('/search-book',  [AdminReservationController::class, 'searchBook']);
         Route::get('/list',         [AdminReservationController::class, 'listReservations']);
         Route::post('/create',      [AdminReservationController::class, 'createReservation']);
+        Route::post('/mark-ready',  [AdminReservationController::class, 'markReady']);
         Route::post('/confirm',     [AdminReservationController::class, 'confirmReservation']);
         Route::post('/cancel',      [AdminReservationController::class, 'cancelReservation']);
         Route::post('/expire',      [AdminReservationController::class, 'expireReservations']);
