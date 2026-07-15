@@ -80,7 +80,12 @@ class BookController extends Controller
     {
         $book = Book::where('isbn', $isbn)->with(['authors', 'categories', 'publisher'])->first();
         if ($book) {
-            return response()->json($book);
+            return response()->json([
+                'message' => 'Sách này đã tồn tại trong hệ thống (trùng mã ISBN).',
+                'errors' => [
+                    'isbn' => ['Sách này đã tồn tại trong hệ thống (trùng mã ISBN).']
+                ]
+            ], 422);
         }
 
         $apiKey = 'AIzaSyAEMgJzW_9AU6guBiywIMD6ba6my9deYw4';
