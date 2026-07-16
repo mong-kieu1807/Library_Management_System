@@ -130,13 +130,22 @@ class UserController extends Controller
         ]);
     }
 
+    private function registrationEmailRule(): \Closure
+    {
+        return function ($attribute, $value, $fail) {
+            if (!str_ends_with(strtolower(trim($value)), '@gmail.com')) {
+                $fail('Vui lòng sử dụng địa chỉ Gmail (@gmail.com) để thêm độc giả.');
+            }
+        };
+    }
+
     /**
      * Store a newly created user in storage.
      */
     public function store(Request $request)
     {
         $validator = Validator::make($request->all(), [
-            'email' => 'required|email|unique:users,email',
+            'email' => ['required', 'email', 'unique:users,email', $this->registrationEmailRule()],
             'password' => 'required|string|min:6',
             'name' => 'required|string|max:150',
             'role' => 'string',
@@ -252,7 +261,7 @@ class UserController extends Controller
         }
 
         $validator = Validator::make($request->all(), [
-            'email' => 'email|unique:users,email,' . $id . ',user_id',
+            'email' => ['sometimes', 'email', 'unique:users,email,' . $id . ',user_id', $this->registrationEmailRule()],
             'password' => 'nullable|string|min:6',
             'name' => 'string|max:150',
             'role' => 'string',
