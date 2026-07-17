@@ -17,6 +17,8 @@ class LoginLogController extends Controller
     {
         $keyword = $request->input('keyword');
         $status = $request->input('status'); // 'success' or 'failed'
+        $from = $request->input('from');
+        $to = $request->input('to');
         $limit = (int)$request->input('limit', 15);
         $page = (int)$request->input('page', 1);
 
@@ -36,6 +38,14 @@ class LoginLogController extends Controller
         // Filter by status (success/failed)
         if ($status) {
             $query->where('login_status', $status);
+        }
+
+        // Filter by date range (login_time)
+        if ($from) {
+            $query->whereDate('login_time', '>=', $from);
+        }
+        if ($to) {
+            $query->whereDate('login_time', '<=', $to);
         }
 
         $paginator = $query->orderBy('login_time', 'DESC')->paginate($limit, ['*'], 'page', $page);

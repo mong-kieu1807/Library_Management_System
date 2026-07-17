@@ -12,6 +12,10 @@ use Illuminate\Support\Facades\DB;
 
 class ReturnController extends Controller
 {
+    public function __construct(private \App\Services\FineService $fineService)
+    {
+    }
+
     /**
      * GET /private/v1/return/search-reader?keyword=
      *
@@ -93,11 +97,17 @@ class ReturnController extends Controller
      *   1. Đọc fine_per_day từ system_settings (ngoài tx, 1 query)
      *   2. lockForUpdate borrow_details + borrow_transactions (tránh race condition)
      *   3. Safety validate (PHP, không thêm query)
-     *   4. Bulk UPDATE borrow_details (CASE WHEN, 1 query)
-     *   5. Bulk UPDATE book_copies → available (1 query)
+     *   4. Bulk UPDATE borrow_details theo từng nhóm tình trạng — set return_date +
+     *      condition_return (ghi nhận ai làm hỏng sách khi nào)
+     *   5. Bulk UPDATE book_copies → trạng thái theo tình trạng trả (available/
+     *      maintenance/lost — xem $statusMap bên dưới)
      *   6. Đếm remaining per borrow_id (1 query)
      *   7. UPDATE borrow_transactions status (1 query per borrow_id)
-     *   8. Fines: SELECT existing (1 query) + bulk INSERT / UPDATE
+     *   8. Fines trễ hạn: SELECT existing (1 query) + bulk INSERT / UPDATE
+     *   9. Fines hư hỏng/mất: tạo qua FineService::createDamageFine() cho từng bản
+     *      sao không ở tình trạng "good" — chạy SAU bước 8 để fine_id thủ công
+     *      (max(fine_id)+1, TiDB không AUTO_INCREMENT) nhìn thấy các fine trễ hạn
+     *      vừa insert ở bước 8, tránh sinh trùng fine_id.
      */
     public function confirmReturn(ReturnBookRequest $request)
     {
@@ -106,12 +116,17 @@ class ReturnController extends Controller
             ->where('config_key', 'fine_per_day')
             ->value('config_value');
 
-        $userId  = (int) $request->input('user_id');
-        $copyIds = array_values(array_unique(array_map('intval', $request->input('copy_ids', []))));
+        $userId = (int) $request->input('user_id');
+        $items  = collect($request->input('items', []))->map(fn ($item) => [
+            'copy_id'   => (int) $item['copy_id'],
+            'condition' => (string) $item['condition'],
+        ])->values();
+        $copyIds = $items->pluck('copy_id')->all();
 
         try {
-            $result = DB::transaction(function () use ($userId, $copyIds, $finePerDay) {
+            $result = DB::transaction(function () use ($userId, $items, $copyIds, $finePerDay) {
                 $today = Carbon::today();
+                $conditionByCopy = $items->pluck('condition', 'copy_id');
 
                 // [1] LOCK: borrow_details JOIN borrow_transactions — giữ lock đến hết tx
                 $details = DB::table('borrow_details as bd')
@@ -131,19 +146,37 @@ class ReturnController extends Controller
                     throw new \RuntimeException('INVALID:ownership mismatch');
                 }
 
-                $borrowGroups = $details->groupBy('borrow_id');
-                $borrowIds    = array_map('intval', $details->pluck('borrow_id')->unique()->values()->toArray());
+                $borrowGroups  = $details->groupBy('borrow_id');
+                $borrowIds     = array_map('intval', $details->pluck('borrow_id')->unique()->values()->toArray());
+                $detailsByCopy = $details->keyBy('copy_id');
 
-                // [3] BULK UPDATE borrow_details — chỉ set return_date (borrow_details không có cột fine_amount)
-                DB::table('borrow_details')
-                    ->whereIn('copy_id', $copyIds)
-                    ->whereNull('return_date')
-                    ->update(['return_date' => $today->toDateString()]);
+                // [3] BULK UPDATE borrow_details theo từng nhóm tình trạng
+                $copyIdsByCondition = collect($copyIds)->groupBy(fn ($copyId) => $conditionByCopy[$copyId] ?? 'good');
+                foreach ($copyIdsByCondition as $condition => $copyIdsInGroup) {
+                    DB::table('borrow_details')
+                        ->whereIn('copy_id', $copyIdsInGroup->all())
+                        ->whereNull('return_date')
+                        ->update([
+                            'return_date'      => $today->toDateString(),
+                            'condition_return' => $condition,
+                        ]);
+                }
 
-                // [4] BULK UPDATE book_copies → available
-                DB::table('book_copies')
-                    ->whereIn('copy_id', $copyIds)
-                    ->update(['status' => 'available']);
+                // [4] BULK UPDATE book_copies → trạng thái theo tình trạng trả. "Tốt"/"Hư
+                // nhẹ" lưu thông lại ngay; "Hư vừa"/"Hư nặng" tạm ngừng cho mượn tới khi
+                // thủ thư xử lý; "Mất sách" loại khỏi tồn kho khả dụng.
+                $statusMap = [
+                    'good'   => 'available',
+                    'minor'  => 'available',
+                    'medium' => 'maintenance',
+                    'heavy'  => 'maintenance',
+                    'lost'   => 'lost',
+                ];
+                foreach ($copyIdsByCondition as $condition => $copyIdsInGroup) {
+                    DB::table('book_copies')
+                        ->whereIn('copy_id', $copyIdsInGroup->all())
+                        ->update(['status' => $statusMap[$condition] ?? 'available']);
+                }
 
                 // [5] ĐẾM remaining unreturned copies per borrow_id (sau khi đã UPDATE)
                 $remainingMap = DB::table('borrow_details')
@@ -247,24 +280,45 @@ class ReturnController extends Controller
                 foreach ($fineUpdates as $fineId => $update) {
                     DB::table('fines')->where('fine_id', $fineId)->update($update);
                 }
-                    Notification::create([
-                        'user_id' => $userId,
-                        'title' => 'Trả sách thành công',
-                        'content' => 'Thư viện đã xác nhận bạn trả sách thành công.',
-                        'type' => 'return',
-                        'is_read' => 0,
-                    ]);
 
-                // Bản sao vừa trả chỉ đơn giản chuyển về 'available' (đã UPDATE ở bước [4]).
-                // Việc gán bản sao này cho reservation đang chờ (nếu có) giờ là thao tác thủ công
-                // của thủ thư qua nút "Xác nhận có sách" trên màn hình Reservation
-                // (Admin\ReservationController::markReady), không còn tự động ở đây nữa —
-                // tránh khóa nhầm bản sao cho một reservation mà thủ thư chưa chủ động xác nhận.
+                // [8] FINES HƯ HỎNG/MẤT — tạo cho từng bản sao không ở tình trạng "good".
+                // Chạy sau khối fine trễ hạn ở trên để FineService::createDamageFine()'s
+                // max(fine_id)+1 nhìn thấy các fine trễ hạn vừa insert, tránh trùng fine_id.
+                $totalDamage = 0;
+                foreach ($items as $item) {
+                    if ($item['condition'] === 'good') {
+                        continue;
+                    }
+                    $detail       = $detailsByCopy->get($item['copy_id']);
+                    $damageResult = $this->fineService->createDamageFine([
+                        'user_id'      => $userId,
+                        'copy_id'      => $item['copy_id'],
+                        'borrow_id'    => $detail->borrow_id ?? null,
+                        'damage_level' => $item['condition'],
+                    ]);
+                    $totalDamage += $damageResult['amount'];
+                }
+
+                Notification::create([
+                    'user_id' => $userId,
+                    'title' => 'Trả sách thành công',
+                    'content' => 'Thư viện đã xác nhận bạn trả sách thành công.',
+                    'type' => 'return',
+                    'is_read' => 0,
+                ]);
+
+                // Bản sao vừa trả chuyển trạng thái theo tình trạng (bước [4]) — "Tốt"/"Hư
+                // nhẹ" thành 'available'. Việc gán bản sao 'available' cho reservation đang
+                // chờ (nếu có) là thao tác thủ công của thủ thư qua nút "Xác nhận có sách"
+                // trên màn hình Reservation (Admin\ReservationController::markReady), không
+                // tự động ở đây — tránh khóa nhầm bản sao cho một reservation mà thủ thư
+                // chưa chủ động xác nhận.
 
                 return [
                     'return_date'          => $today->toDateString(),
                     'returned_books_count' => count($copyIds),
                     'total_penalty'        => $totalPenalty,
+                    'total_damage'         => $totalDamage,
                     'closed_transactions'  => $closedTransactions,
                 ];
             });

@@ -31,7 +31,7 @@ class FineController extends Controller
             'user_id'      => 'required|integer|exists:users,user_id',
             'copy_id'      => 'required|integer|exists:book_copies,copy_id',
             'borrow_id'    => 'nullable|integer',
-            'damage_level' => 'required|in:minor,heavy,lost',
+            'damage_level' => 'required|in:minor,medium,heavy,lost',
         ]);
 
         try {
