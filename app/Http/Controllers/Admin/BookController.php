@@ -220,6 +220,7 @@ class BookController extends Controller
             'create_first_copy' => ['sometimes', 'boolean'],
             'barcode' => ['nullable', 'string', 'max:64', 'unique:book_copies,barcode'],
             'shelf_location' => ['nullable', 'string', 'max:100'],
+            'copies_count' => ['nullable', 'integer', 'min:1', 'max:1000'],
         ], [
             'isbn.unique' => 'Sách này đã tồn tại trong hệ thống (trùng mã ISBN).',
             'barcode.unique' => 'Mã vạch này đã tồn tại trong hệ thống.',
@@ -284,19 +285,42 @@ class BookController extends Controller
                 $book->categories()->sync($validated['categories'] ?? []);
 
                 if ($createFirstCopy) {
-                    $barcode = $validated['barcode'] ?? null;
-                    if (!$barcode) {
-                        $barcode = BookCopy::generateUniqueBarcode();
-                    }
+                    $copiesCount = (int) ($validated['copies_count'] ?? 1);
 
-                    BookCopy::create([
-                        'book_id' => $book->book_id,
-                        'barcode' => $barcode,
-                        'status' => 'available',
-                        'condition' => 'good',
-                        'shelf_location' => $validated['shelf_location'] ?? null,
-                        'acquisition_date' => now()->toDateString(),
-                    ]);
+                    if ($copiesCount > 1) {
+                        // Tạo hàng loạt N bản sao — barcode tự sinh tuần tự "BOOK000001..."
+                        // (khác định dạng BC<timestamp> của generateUniqueBarcode(), xem
+                        // BookCopy::generateSequentialBarcodes()). Bỏ qua field barcode thủ
+                        // công vì không áp dụng khi tạo nhiều hơn 1 bản sao.
+                        $barcodes = BookCopy::generateSequentialBarcodes($copiesCount);
+                        $now = now();
+                        $rows = array_map(fn ($barcode) => [
+                            'book_id' => $book->book_id,
+                            'barcode' => $barcode,
+                            'status' => 'available',
+                            'condition' => 'good',
+                            'shelf_location' => $validated['shelf_location'] ?? null,
+                            'acquisition_date' => $now->toDateString(),
+                            'created_at' => $now,
+                            'updated_at' => $now,
+                        ], $barcodes);
+
+                        DB::table('book_copies')->insert($rows);
+                    } else {
+                        $barcode = $validated['barcode'] ?? null;
+                        if (!$barcode) {
+                            $barcode = BookCopy::generateUniqueBarcode();
+                        }
+
+                        BookCopy::create([
+                            'book_id' => $book->book_id,
+                            'barcode' => $barcode,
+                            'status' => 'available',
+                            'condition' => 'good',
+                            'shelf_location' => $validated['shelf_location'] ?? null,
+                            'acquisition_date' => now()->toDateString(),
+                        ]);
+                    }
                 }
 
                 return $book;

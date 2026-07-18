@@ -62,12 +62,16 @@ class FineService
         $amount  = (int) ceil(($copy->replacement_cost ?? 0) * $percent / 100);
 
         $reasons = [
-            'minor' => 'Sách hư hỏng nhẹ',
-            'heavy' => 'Sách hư hỏng nặng',
-            'lost'  => 'Mất sách',
+            'minor'  => 'Sách hư hỏng nhẹ',
+            'medium' => 'Sách hư hỏng vừa',
+            'heavy'  => 'Sách hư hỏng nặng',
+            'lost'   => 'Mất sách',
         ];
 
-        $nextId = (int)(DB::table('fines')->max('fine_id') ?? 0) + 1;
+        // TiDB: fine_id không có AUTO_INCREMENT -> tự sinh id tuần tự trước khi insert
+        // (cùng pattern đã dùng ở ReturnController::confirmReturn). lockForUpdate() để
+        // tránh 2 request tạo phí đồng thời sinh trùng fine_id.
+        $nextId = (int)(DB::table('fines')->lockForUpdate()->max('fine_id') ?? 0) + 1;
 
         DB::table('fines')->insert([
             'fine_id'    => $nextId,
@@ -372,14 +376,20 @@ class FineService
     private function getDamagePercent(string $level): int
     {
         $map = DB::table('system_settings')
-            ->whereIn('config_key', ['damage_minor_percent', 'damage_heavy_percent', 'damage_lost_percent'])
+            ->whereIn('config_key', [
+                'damage_minor_percent',
+                'damage_medium_percent',
+                'damage_heavy_percent',
+                'damage_lost_percent',
+            ])
             ->pluck('config_value', 'config_key');
 
         return match ($level) {
-            'minor' => (int)($map['damage_minor_percent'] ?? 20),
-            'heavy' => (int)($map['damage_heavy_percent'] ?? 50),
-            'lost'  => (int)($map['damage_lost_percent']  ?? 100),
-            default => 100,
+            'minor'  => (int)($map['damage_minor_percent']  ?? 20),
+            'medium' => (int)($map['damage_medium_percent'] ?? 35),
+            'heavy'  => (int)($map['damage_heavy_percent']  ?? 50),
+            'lost'   => (int)($map['damage_lost_percent']   ?? 100),
+            default  => 100,
         };
     }
 

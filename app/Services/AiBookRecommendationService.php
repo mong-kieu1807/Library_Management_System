@@ -67,6 +67,23 @@ class AiBookRecommendationService
             );
         }
 
+        // Chuỗi thuần số (VD "Gợi ý sách cho độc giả 123") là mã độc giả, không phải
+        // tên — nhận diện ngay ở lượt đầu thay vì luôn coi là tên rồi tìm 0 kết quả và
+        // phải hỏi lại (trước đây chỉ resolveReaderByIdentifier() được ở lượt 2).
+        if (ctype_digit($name)) {
+            $reader = $this->resolveReaderByIdentifier($name);
+
+            if (!$reader) {
+                return $this->reply(
+                    $conversationId,
+                    "Không tìm thấy độc giả với mã \"{$name}\".",
+                    null
+                );
+            }
+
+            return $this->buildRecommendationReply($conversationId, $reader);
+        }
+
         $matches = $this->findReadersByName($name);
 
         if ($matches->count() === 1) {
@@ -258,6 +275,7 @@ class AiBookRecommendationService
                     'b.title',
                     'a.author_name as author',
                     'c.category_name as category',
+                    'b.cover_image',
                     DB::raw('COALESCE(pop.borrow_count, 0) as borrow_count')
                 )
                 ->orderByDesc('pop.borrow_count')
@@ -296,6 +314,7 @@ class AiBookRecommendationService
                     'b.title',
                     'a.author_name as author',
                     DB::raw("COALESCE(cats.category_name, 'Chưa phân loại') as category"),
+                    'b.cover_image',
                     DB::raw('COALESCE(pop.borrow_count, 0) as borrow_count')
                 )
                 ->orderByDesc('pop.borrow_count')
@@ -478,6 +497,7 @@ PROMPT;
             'title' => $c->title,
             'author' => $c->author,
             'category' => $c->category,
+            'cover_image' => $c->cover_image ?? null,
             'reason' => $reasons[(int) $c->book_id] ?? self::FALLBACK_REASON,
         ])->values()->all();
     }

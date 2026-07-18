@@ -182,15 +182,22 @@ class ReservationController extends Controller
      * GET /private/v1/reservation/list
      *
      * Danh sách phiếu đặt trước.
-     * ?user_id= (optional) lọc theo user
-     * ?status=  (optional) lọc theo trạng thái
+     * ?user_id=         (optional) lọc theo user
+     * ?status=          (optional) lọc theo trạng thái
+     * ?keyword=         (optional) tìm theo tên độc giả / mã thẻ / tên sách
+     * ?from=, ?to=      (optional) lọc theo ngày đặt (r.created_at)
+     * ?queue_position=  (optional) lọc theo số thứ tự hàng chờ (chỉ áp dụng nhóm pending+online)
      * actual_queue_position chỉ tính trong nhóm pending+online (những người thực sự đang xếp hàng).
      */
     public function listReservations(Request $request)
     {
-        $userId  = $request->query('user_id');
-        $status  = $request->query('status');
-        $perPage = min((int) $request->query('per_page', 20), 100);
+        $userId        = $request->query('user_id');
+        $status        = $request->query('status');
+        $keyword       = trim((string) $request->query('keyword', ''));
+        $from          = $request->query('from');
+        $to            = $request->query('to');
+        $queuePosition = $request->query('queue_position');
+        $perPage       = min((int) $request->query('per_page', 20), 100);
 
         $query = DB::table('reservations as r')
             ->join('books as b', 'b.book_id', '=', 'r.book_id')
@@ -228,6 +235,25 @@ class ReservationController extends Controller
         if ($status) {
             $query->where('r.status', $status);
         }
+        if ($keyword !== '') {
+            $query->where(function ($q) use ($keyword) {
+                $q->where('u.full_name', 'LIKE', '%' . $keyword . '%')
+                  ->orWhere('lc.card_number', 'LIKE', '%' . $keyword . '%')
+                  ->orWhere('b.title', 'LIKE', '%' . $keyword . '%');
+            });
+        }
+        if ($from) {
+            $query->whereDate('r.created_at', '>=', $from);
+        }
+        if ($to) {
+            $query->whereDate('r.created_at', '<=', $to);
+        }
+        if ($queuePosition !== null && $queuePosition !== '') {
+            // actual_queue_position chỉ có ý nghĩa với nhóm pending+online — ép luôn 2 điều
+            // kiện này khi lọc theo hàng chờ để tránh so khớp nhầm với các phiếu khác nhóm.
+            $query->where('r.status', 'pending')->where('r.pickup_type', 'online');
+            $query->having('actual_queue_position', '=', (int) $queuePosition);
+        }
 
         $paginated = $query->paginate($perPage);
 
@@ -243,18 +269,50 @@ class ReservationController extends Controller
     }
 
     /**
+     * GET /private/v1/reservation/available-copies?book_id=
+     *
+     * Danh sách bản sao đang "available" của 1 cuốn sách, kèm vị trí kệ — để thủ thư
+     * chọn đúng 1 bản sao khi "Xác nhận có sách" (mark-ready) hoặc xác nhận nhận sách
+     * (confirm, nhánh pickup_type=counter), thay vì tự động chọn ngầm hoặc gõ tay copy_id.
+     */
+    public function availableCopiesByBook(Request $request)
+    {
+        $bookId = (int) $request->query('book_id');
+        if (!$bookId) {
+            return response()->json(['code' => 422, 'message' => 'book_id là bắt buộc.'], 422);
+        }
+
+        $copies = DB::table('book_copies as bc')
+            ->where('bc.book_id', $bookId)
+            ->where('bc.status', 'available')
+            ->select(['bc.copy_id', 'bc.barcode', 'bc.condition', 'bc.shelf_location'])
+            ->orderBy('bc.shelf_location')
+            ->orderBy('bc.copy_id')
+            ->get();
+
+        return response()->json([
+            'code'    => 200,
+            'results' => ['objects' => $copies],
+        ]);
+    }
+
+    /**
      * POST /private/v1/reservation/mark-ready
      *
      * "Xác nhận có sách" — chỉ áp dụng cho reservation pending + pickup_type=online.
-     * Gán 1 bản sao available cho reservation đứng đầu hàng chờ, khóa bản sao lại,
-     * và chuyển reservation sang giai đoạn "đến quầy nhận" (ready_for_pickup).
+     * Gán 1 bản sao cho reservation đứng đầu hàng chờ, khóa bản sao lại, và chuyển
+     * reservation sang giai đoạn "đến quầy nhận" (ready_for_pickup).
+     *
+     * copy_id (optional): bản sao do thủ thư chọn từ danh sách available-copies. Nếu bỏ
+     * trống, giữ nguyên hành vi cũ — tự động chọn bản sao available đầu tiên.
      */
     public function markReady(MarkReadyRequest $request)
     {
-        $reservationId = (int) $request->input('reservation_id');
+        $reservationId   = (int) $request->input('reservation_id');
+        $requestedCopyId = $request->filled('copy_id') ? (int) $request->input('copy_id') : null;
 
         try {
-            $result = DB::transaction(function () use ($reservationId) {
+            $result = DB::transaction(function () use ($reservationId, $requestedCopyId) {
                 $reservation = DB::table('reservations')
                     ->where('reservation_id', $reservationId)
                     ->lockForUpdate()
@@ -280,15 +338,29 @@ class ReservationController extends Controller
                     throw new \RuntimeException('INVALID:Phải xác nhận theo đúng thứ tự hàng chờ. Phiếu #' . $firstInQueue->reservation_id . ' đang đứng trước.');
                 }
 
-                $copy = DB::table('book_copies')
-                    ->where('book_id', $reservation->book_id)
-                    ->where('status', 'available')
-                    ->orderBy('copy_id')
-                    ->lockForUpdate()
-                    ->first();
+                if ($requestedCopyId) {
+                    $copy = DB::table('book_copies')->where('copy_id', $requestedCopyId)->lockForUpdate()->first();
+                    if (!$copy) {
+                        throw new \RuntimeException('INVALID:Bản sao không tồn tại trong hệ thống.');
+                    }
+                    if ((int) $copy->book_id !== (int) $reservation->book_id) {
+                        throw new \RuntimeException('INVALID:Bản sao không thuộc sách được đặt trước.');
+                    }
+                    if ($copy->status !== 'available') {
+                        throw new \RuntimeException('INVALID:Bản sao không còn khả dụng (trạng thái: ' . $copy->status . ').');
+                    }
+                } else {
+                    // Không truyền copy_id — hành vi cũ, tự động chọn bản sao available đầu tiên.
+                    $copy = DB::table('book_copies')
+                        ->where('book_id', $reservation->book_id)
+                        ->where('status', 'available')
+                        ->orderBy('copy_id')
+                        ->lockForUpdate()
+                        ->first();
 
-                if (!$copy) {
-                    throw new \RuntimeException('INVALID:Hiện không có bản sao khả dụng cho sách này.');
+                    if (!$copy) {
+                        throw new \RuntimeException('INVALID:Hiện không có bản sao khả dụng cho sách này.');
+                    }
                 }
 
                 $now      = now();

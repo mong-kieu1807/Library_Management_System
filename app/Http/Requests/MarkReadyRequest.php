@@ -15,6 +15,7 @@ class MarkReadyRequest extends FormRequest
     {
         return [
             'reservation_id' => ['required', 'integer', 'exists:reservations,reservation_id'],
+            'copy_id' => ['nullable', 'integer', 'exists:book_copies,copy_id'],
         ];
     }
 
