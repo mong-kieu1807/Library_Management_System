@@ -189,6 +189,8 @@ class BorrowTransactionController extends Controller
      */
     public function validateCopy(string $barcode)
     {
+        $barcode = \App\Models\BookCopy::extractBarcode($barcode);
+
         // Query 1: tìm bản sao + thông tin sách
         $copy = DB::table('book_copies as bc')
             ->join('books as b', 'b.book_id', '=', 'bc.book_id')

@@ -15,7 +15,7 @@ class BookCopyController extends Controller
     public function index(Request $request)
     {
         $q = $request->input('q');
-        $query = BookCopy::with('book');
+        $query = BookCopy::with(['book.authors', 'book.categories', 'book.publisher']);
  
         if (!empty($q)) {
             $query->where(function ($sub) use ($q) {
@@ -36,6 +36,20 @@ class BookCopyController extends Controller
                 'copy_id' => $copy->copy_id,
                 'book_id' => $copy->book_id,
                 'book_title' => $copy->book ? $copy->book->title : 'N/A',
+                'book_isbn' => $copy->book ? $copy->book->isbn : 'N/A',
+                'book_authors' => $copy->book ? $copy->book->authors->pluck('author_name')->implode(', ') : 'N/A',
+                'book_categories' => $copy->book ? $copy->book->categories->pluck('category_name')->implode(', ') : 'N/A',
+                'book_publisher' => $copy->book && $copy->book->publisher ? $copy->book->publisher->publisher_name : 'N/A',
+                'book_publish_year' => $copy->book ? ($copy->book->publish_year ?: 'Chưa cập nhật') : 'Chưa cập nhật',
+                'book_edition' => $copy->book ? ($copy->book->edition ?: 'Chưa cập nhật') : 'Chưa cập nhật',
+                'book_language' => $copy->book ? mb_strtoupper($copy->book->language ?: 'TIẾNG VIỆT') : 'Chưa cập nhật',
+                'book_pages' => $copy->book ? ($copy->book->pages ?: 'Chưa cập nhật') : 'Chưa cập nhật',
+                'book_dimensions' => $copy->book ? ($copy->book->dimensions ?: 'Chưa cập nhật') : 'Chưa cập nhật',
+                'book_cover_type' => $copy->book ? ($copy->book->cover_type ?: 'Chưa cập nhật') : 'Chưa cập nhật',
+                'book_replacement_cost' => $copy->book ? $copy->book->replacement_cost : 0,
+                'book_avg_rating' => $copy->book ? $copy->book->avg_rating : '0.0',
+                'book_total_reviews' => $copy->book ? $copy->book->total_reviews : 0,
+                'book_description' => $copy->book ? ($copy->book->description ?: 'Không có mô tả') : 'Không có mô tả',
                 'barcode' => $copy->barcode,
                 'location' => $copy->shelf_location ?: 'Chưa xếp kệ',
                 'condition' => $copy->condition,
@@ -196,7 +210,7 @@ class BookCopyController extends Controller
         }
 
         $ids = explode(',', $idsString);
-        $copies = BookCopy::with('book')->whereIn('copy_id', $ids)->get();
+        $copies = BookCopy::with(['book.authors', 'book.categories', 'book.publisher'])->whereIn('copy_id', $ids)->get();
 
         if ($copies->isEmpty()) {
             return response()->json(['message' => 'Không tìm thấy bản sao nào.'], 404);

@@ -306,6 +306,7 @@ class BookController extends Controller
                         ], $barcodes);
 
                         DB::table('book_copies')->insert($rows);
+
                     } else {
                         $barcode = $validated['barcode'] ?? null;
                         if (!$barcode) {

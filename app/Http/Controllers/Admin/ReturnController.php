@@ -353,6 +353,7 @@ class ReturnController extends Controller
      */
     public function validateReturnCopy(string $barcode, Request $request)
     {
+        $barcode = \App\Models\BookCopy::extractBarcode($barcode);
         $userId = $request->query('user_id');
 
         if (!$userId || !is_numeric($userId)) {

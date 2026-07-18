@@ -43,14 +43,12 @@ class BookCopy extends Model
      */
     public static function generateUniqueBarcode(): string
     {
-        for ($attempt = 0; $attempt < 10; $attempt++) {
-            $candidate = 'BC' . now()->format('ymdHis') . random_int(100, 999);
-            if (!self::where('barcode', $candidate)->exists()) {
-                return $candidate;
-            }
+        try {
+            $barcodes = static::generateSequentialBarcodes(1);
+            return $barcodes[0];
+        } catch (\Throwable $e) {
+            return 'BOOK' . str_pad((string)random_int(1, 999999), 6, '0', STR_PAD_LEFT);
         }
-
-        throw new \RuntimeException('Không thể sinh barcode duy nhất, vui lòng thử lại.');
     }
 
     /**
@@ -74,4 +72,19 @@ class BookCopy extends Model
 
         return $barcodes;
     }
+
+    /**
+     * Trích xuất mã barcode thực tế từ chuỗi thông tin mã QR quét được.
+     */
+    public static function extractBarcode(string $input): string
+    {
+        // Khớp định dạng: "Mã sách: BOOKXXXXXX" hoặc "Mã sách: BCXXXXXX"
+        if (preg_match('/Mã sách:\s*([A-Za-z0-9\-]+)/u', $input, $matches)) {
+            return $matches[1];
+        }
+
+        return trim($input);
+    }
 }
+
+
