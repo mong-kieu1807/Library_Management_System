@@ -107,6 +107,8 @@ class User extends Authenticatable
         'password',
         'phone',
         'address',
+        'date_of_birth',
+        'gender',
         'role_id',
         'status',
         'avatar_url',
@@ -132,6 +134,7 @@ class User extends Authenticatable
     {
         return [
             'email_verified_at' => 'datetime',
+            'date_of_birth' => 'date',
             'password' => 'hashed',
         ];
     }

@@ -10,6 +10,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Carbon\Carbon;
 use Exception;
 
@@ -56,6 +57,8 @@ class UserController extends Controller
             'phone' => $user->phone,
             'avatar' => $user->avatar_url,
             'address' => $user->address,
+            'date_of_birth' => $user->date_of_birth ? $user->date_of_birth->format('Y-m-d') : null,
+            'gender' => $user->gender,
             'card_number' => $cardNumber,
             'status' => [
                 'value' => (string)$user->status,
@@ -139,6 +142,21 @@ class UserController extends Controller
         };
     }
 
+    /** Độc giả phải từ đủ 6 tuổi trở lên (chưa đủ tuổi không được cấp tài khoản mượn sách). */
+    private function minimumAgeRule(int $minAge = 6): \Closure
+    {
+        return function ($attribute, $value, $fail) use ($minAge) {
+            try {
+                $age = Carbon::parse($value)->age;
+            } catch (\Exception) {
+                return; // định dạng ngày không hợp lệ đã bị chặn bởi rule 'date' riêng
+            }
+            if ($age < $minAge) {
+                $fail("Độc giả phải từ đủ {$minAge} tuổi trở lên.");
+            }
+        };
+    }
+
     /**
      * Store a newly created user in storage.
      */
@@ -151,7 +169,8 @@ class UserController extends Controller
             'role' => 'string',
             'phone' => 'nullable|string|max:20',
             'address' => 'nullable|string|max:255',
-            'avatar' => 'nullable|string|max:255',
+            'date_of_birth' => ['nullable', 'date', $this->minimumAgeRule()],
+            'gender' => 'nullable|in:male,female,other',
         ], [
             'email.unique' => 'Độc giả này đã tồn tại (email đã được sử dụng).',
         ]);
@@ -161,6 +180,24 @@ class UserController extends Controller
                 'message' => $validator->errors()->first(),
                 'errors' => $validator->errors()
             ], 422);
+        }
+
+        // Avatar: new file upload, hoặc (back-compat) một chuỗi URL truyền thẳng.
+        // Lưu file trực tiếp (không qua Intervention Image) — giống ProfileController::updateAvatar,
+        // vì máy chạy dev hiện tại không có extension GD nên driver ảnh sẽ báo lỗi 500.
+        $avatarUrl = null;
+        if ($request->hasFile('avatar')) {
+            $request->validate([
+                'avatar' => ['image', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
+            ]);
+
+            $path = $request->file('avatar')->store('avatars', 'public');
+            $avatarUrl = '/storage/' . $path;
+        } elseif ($request->exists('avatar')) {
+            $request->validate([
+                'avatar' => ['nullable', 'string', 'max:255'],
+            ]);
+            $avatarUrl = $request->input('avatar');
         }
 
         $roleName = $request->input('role', 'reader');
@@ -175,7 +212,7 @@ class UserController extends Controller
             $statusValue = (int)($request->input('status.value', 1));
         }
 
-        $user = DB::transaction(function () use ($request, $role, $statusValue) {
+        $user = DB::transaction(function () use ($request, $role, $statusValue, $avatarUrl) {
             $user = User::create([
                 'role_id' => $role ? $role->role_id : 3, // Fallback to 3 if not found
                 'email' => $request->input('email'),
@@ -183,8 +220,10 @@ class UserController extends Controller
                 'full_name' => $request->input('name'),
                 'phone' => $request->input('phone'),
                 'address' => $request->input('address'),
+                'date_of_birth' => $request->input('date_of_birth'),
+                'gender' => $request->input('gender'),
                 'status' => $statusValue,
-                'avatar_url' => $request->input('avatar'),
+                'avatar_url' => $avatarUrl,
             ]);
 
             // Create library card if the created user is a reader
@@ -267,7 +306,8 @@ class UserController extends Controller
             'role' => 'string',
             'phone' => 'nullable|string|max:20',
             'address' => 'nullable|string|max:255',
-            'avatar' => 'nullable|string|max:255',
+            'date_of_birth' => ['nullable', 'date', $this->minimumAgeRule()],
+            'gender' => 'nullable|in:male,female,other',
         ], [
             'email.unique' => 'Email này đã được sử dụng bởi độc giả khác.',
         ]);
@@ -277,6 +317,31 @@ class UserController extends Controller
                 'message' => $validator->errors()->first(),
                 'errors' => $validator->errors()
             ], 422);
+        }
+
+        // Avatar: file mới, xóa (chuỗi rỗng), hoặc (back-compat) một chuỗi URL truyền thẳng.
+        $newAvatarUrl = null;
+        $avatarProvided = false;
+        $oldAvatarPathForCleanup = null;
+
+        if ($request->hasFile('avatar')) {
+            $request->validate([
+                'avatar' => ['image', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
+            ]);
+
+            $path = $request->file('avatar')->store('avatars', 'public');
+            $newAvatarUrl = '/storage/' . $path;
+            $avatarProvided = true;
+            $oldAvatarPathForCleanup = $user->avatar_url;
+        } elseif ($request->exists('avatar')) {
+            $request->validate([
+                'avatar' => ['nullable', 'string', 'max:255'],
+            ]);
+            $newAvatarUrl = $request->input('avatar');
+            $avatarProvided = true;
+            if ($newAvatarUrl === '' || $newAvatarUrl === null) {
+                $oldAvatarPathForCleanup = $user->avatar_url;
+            }
         }
 
         // Chụp lại status trước khi sửa để phát hiện khóa/mở khóa cho audit log bên dưới.
@@ -298,10 +363,16 @@ class UserController extends Controller
         if ($request->has('address')) {
             $user->address = $request->input('address');
         }
-        if ($request->has('avatar')) {
-            $user->avatar_url = $request->input('avatar');
+        if ($avatarProvided) {
+            $user->avatar_url = $newAvatarUrl ?: null;
         }
-        
+        if ($request->has('date_of_birth')) {
+            $user->date_of_birth = $request->input('date_of_birth');
+        }
+        if ($request->has('gender')) {
+            $user->gender = $request->input('gender');
+        }
+
         // Handle status if provided in object form or direct value
         if ($request->has('status')) {
             $statusInput = $request->input('status');
@@ -322,6 +393,11 @@ class UserController extends Controller
         }
 
         $user->save();
+
+        // Xóa file avatar cũ trên đĩa (chỉ khi lưu local qua /storage/avatars/, không đụng URL ngoài).
+        if ($oldAvatarPathForCleanup && str_starts_with($oldAvatarPathForCleanup, '/storage/avatars/')) {
+            Storage::disk('public')->delete(str_replace('/storage/', '', $oldAvatarPathForCleanup));
+        }
 
         // Module 7 — Activity Log: chỉ log khi status thực sự đổi (khóa/mở khóa),
         // không log các lần sửa trường khác không đụng tới status.
