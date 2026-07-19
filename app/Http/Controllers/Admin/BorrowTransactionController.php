@@ -39,7 +39,9 @@ class BorrowTransactionController extends Controller
             ->where('r.role_name', 'reader')
             ->where(function ($q) use ($keyword) {
                 $q->where('u.full_name', 'LIKE', '%' . $keyword . '%')
-                  ->orWhere('lc.card_number', 'LIKE', '%' . $keyword . '%');
+                  ->orWhere('lc.card_number', 'LIKE', '%' . $keyword . '%')
+                  ->orWhere('u.email', 'LIKE', '%' . $keyword . '%')
+                  ->orWhere('u.phone', 'LIKE', '%' . $keyword . '%');
             })
             ->select([
                 'u.user_id',
