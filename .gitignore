@@ -22,3 +22,6 @@
 Homestead.json
 Homestead.yaml
 Thumbs.db
+
+# Thư mục clone lồng bị dính nhầm vào git (repo con có .git riêng bên trong repo này)
+/Library_Management_System
