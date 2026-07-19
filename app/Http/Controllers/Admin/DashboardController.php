@@ -61,13 +61,14 @@ class DashboardController extends Controller
             ->selectRaw("status, COUNT(*) as cnt")
             ->groupBy('status')
             ->pluck('cnt', 'status');
-        $reserved   = DB::table('reservations')->whereIn('status', ['pending', 'ready_for_pickup'])->count();
 
         $inventoryData = [
             ['name' => 'Có sẵn',      'value' => (int)($copies['available'] ?? 0),    'color' => '#10B981'],
             ['name' => 'Đang mượn',   'value' => (int)($copies['borrowed'] ?? 0),     'color' => '#3B82F6'],
-            ['name' => 'Đặt trước',   'value' => (int)$reserved,                       'color' => '#F59E0B'],
-            ['name' => 'Bảo dưỡng',   'value' => (int)($copies['maintenance'] ?? 0),  'color' => '#EF4444'],
+            ['name' => 'Đặt trước',   'value' => (int)($copies['reserved'] ?? 0),     'color' => '#F59E0B'],
+            ['name' => 'Bảo dưỡng',   'value' => (int)($copies['maintenance'] ?? 0),  'color' => '#8B5CF6'],
+            ['name' => 'Mất/Hỏng',    'value' => (int)($copies['lost'] ?? 0),         'color' => '#EF4444'],
+            ['name' => 'Đã thanh lý', 'value' => (int)($copies['liquidated'] ?? 0),   'color' => '#9CA3AF'],
         ];
 
         // -- top 5 books --
@@ -91,9 +92,6 @@ class DashboardController extends Controller
             })
             ->join('book_copies as bc', 'bc.copy_id', '=', 'bd.copy_id')
             ->join('books as b', 'b.book_id', '=', 'bc.book_id')
-            ->leftJoin('fines as f', function ($j) {
-                $j->on('f.borrow_id', '=', 'bt.borrow_id')->on('f.copy_id', '=', 'bd.copy_id');
-            })
             ->whereNull('bd.return_date')
             ->whereRaw('COALESCE(bd.renewed_due_date, bt.due_date) < CURDATE()')
             ->select([
@@ -101,7 +99,7 @@ class DashboardController extends Controller
                 'u.full_name as reader',
                 'b.title as book',
                 DB::raw('DATEDIFF(CURDATE(), COALESCE(bd.renewed_due_date, bt.due_date)) as days'),
-                DB::raw('COALESCE(f.amount, DATEDIFF(CURDATE(), COALESCE(bd.renewed_due_date, bt.due_date)) * (SELECT CAST(config_value AS UNSIGNED) FROM system_settings WHERE config_key="fine_per_day" LIMIT 1)) as fee'),
+                DB::raw('DATEDIFF(CURDATE(), COALESCE(bd.renewed_due_date, bt.due_date)) * (SELECT CAST(config_value AS UNSIGNED) FROM system_settings WHERE config_key="fine_per_day" LIMIT 1) as fee'),
             ])
             ->orderByDesc('days')
             ->limit(5)
@@ -400,9 +398,7 @@ class DashboardController extends Controller
                     'title'        => $r->title,
                     'overdue_days' => $days,
                     'severity'     => $days <= 3 ? 'light' : ($days <= 10 ? 'medium' : 'heavy'),
-                    'fine_amount'  => (int) $r->fine_amount > 0
-                        ? (int) $r->fine_amount
-                        : $days * $finePerDay,
+                    'fine_amount'  => $days * $finePerDay,
                     'fine_status'  => $r->fine_status,
                 ];
             });
