@@ -74,6 +74,21 @@ class ActivityLogService
         return $this->log($actorId, self::ACTION_UPDATE, 'system_settings', $settingId, $oldData, $newData, $ipAddress, 'SYSTEM_SETTING', $description);
     }
 
+    public function userCreated(int $actorId, int $userId, ?array $newData, ?string $ipAddress = null): AuditLog
+    {
+        return $this->log($actorId, self::ACTION_CREATE, 'users', $userId, null, $newData, $ipAddress, 'USER', 'Tạo tài khoản người dùng');
+    }
+
+    public function userUpdated(int $actorId, int $userId, ?array $oldData, ?array $newData, ?string $ipAddress = null): AuditLog
+    {
+        return $this->log($actorId, self::ACTION_UPDATE, 'users', $userId, $oldData, $newData, $ipAddress, 'USER', 'Cập nhật thông tin người dùng');
+    }
+
+    public function userDeleted(int $actorId, int $userId, ?array $oldData, ?string $ipAddress = null): AuditLog
+    {
+        return $this->log($actorId, self::ACTION_DELETE, 'users', $userId, $oldData, null, $ipAddress, 'USER', 'Xóa tài khoản người dùng');
+    }
+
     public function userLocked(int $actorId, int $userId, ?array $oldData, ?array $newData, ?string $ipAddress = null): AuditLog
     {
         return $this->log($actorId, self::ACTION_LOCK, 'users', $userId, $oldData, $newData, $ipAddress, 'USER', 'Khóa tài khoản');

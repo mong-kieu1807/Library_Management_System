@@ -486,6 +486,17 @@ class UserController extends Controller
             Cache::forget($verificationCacheKey);
         }
 
+        $this->activityLogService->userCreated(
+            auth()->id() ?? 0,
+            $user->user_id,
+            [
+                'full_name' => $user->full_name,
+                'email'     => $user->email,
+                'role'      => $roleName,
+            ],
+            $request->ip()
+        );
+
         return response()->json([
             'code' => 200,
             'results' => [
@@ -578,8 +589,14 @@ class UserController extends Controller
             }
         }
 
-        // Chụp lại status trước khi sửa để phát hiện khóa/mở khóa cho audit log bên dưới.
+        // Chụp lại status và dữ liệu trước khi sửa cho audit log
         $oldStatus = (int) $user->status;
+        $oldUserData = [
+            'full_name' => $user->full_name,
+            'email'     => $user->email,
+            'phone'     => $user->phone,
+            'address'   => $user->address,
+        ];
 
         // Cập nhật các trường
         if ($request->has('name')) {
@@ -633,14 +650,24 @@ class UserController extends Controller
             Storage::disk(config('filesystems.media_disk'))->delete($oldAvatarPathForCleanup);
         }
 
-        // Module 7 — Activity Log: chỉ log khi status thực sự đổi (khóa/mở khóa),
-        // không log các lần sửa trường khác không đụng tới status.
+        // Module 7 — Activity Log
+        $statusChanged = false;
         if ($request->has('status')) {
             $lockAudit = self::buildLockAuditPayload($oldStatus, (int) $user->status);
             if ($lockAudit !== null) {
+                $statusChanged = true;
                 $method = $lockAudit['action'] === 'lock' ? 'userLocked' : 'userUnlocked';
-                $this->activityLogService->{$method}(auth()->id(), $user->user_id, $lockAudit['old_data'], $lockAudit['new_data'], $request->ip());
+                $this->activityLogService->{$method}(auth()->id() ?? 0, $user->user_id, $lockAudit['old_data'], $lockAudit['new_data'], $request->ip());
             }
+        }
+        if (!$statusChanged) {
+            $newUserData = [
+                'full_name' => $user->full_name,
+                'email'     => $user->email,
+                'phone'     => $user->phone,
+                'address'   => $user->address,
+            ];
+            $this->activityLogService->userUpdated(auth()->id() ?? 0, $user->user_id, $oldUserData, $newUserData, $request->ip());
         }
 
         return response()->json([
@@ -688,7 +715,14 @@ class UserController extends Controller
             ], 404);
         }
 
+        $oldData = [
+            'full_name' => $user->full_name,
+            'email'     => $user->email,
+        ];
+
         $user->delete();
+
+        $this->activityLogService->userDeleted(auth()->id() ?? 0, (int) $id, $oldData, request()->ip());
 
         return response()->json([
             'code' => 200,
@@ -713,6 +747,8 @@ class UserController extends Controller
 
         $user->password = Hash::make('12345678');
         $user->save();
+
+        $this->activityLogService->userUpdated(auth()->id() ?? 0, $user->user_id, ['password' => '***'], ['password' => 'default_12345678'], $request->ip());
 
         return response()->json([
             'code' => 200,
