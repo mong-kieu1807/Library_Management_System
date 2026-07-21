@@ -220,6 +220,7 @@ Route::middleware(['auth:sanctum', 'role:admin,librarian'])->prefix('private/v1'
     // Reservation (Đặt trước sách)
     Route::prefix('reservation')->group(function () {
         Route::get('/search-book',  [AdminReservationController::class, 'searchBook']);
+        Route::get('/search-reader', [AdminReservationController::class, 'searchReader']);
         Route::get('/list',         [AdminReservationController::class, 'listReservations']);
         Route::get('/available-copies', [AdminReservationController::class, 'availableCopiesByBook']);
         Route::post('/create',      [AdminReservationController::class, 'createReservation']);
