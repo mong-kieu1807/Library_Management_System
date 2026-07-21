@@ -11,6 +11,7 @@ use App\Models\BookEditHistory;
 use App\Models\Publisher;
 use App\Services\ActivityLogService;
 use App\Services\GoogleBooksService;
+use Intervention\Image\Encoders\JpegEncoder;
 use Intervention\Image\Laravel\Facades\Image;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -253,12 +254,9 @@ class BookController extends Controller
             $image->cover(300, 450);
 
             $filename = time().'_'.Str::random(8).'.jpg';
-
-            $image->save(
-                storage_path('app/public/book-covers/'.$filename)
-            );
-
             $coverImagePath = 'book-covers/'.$filename;
+
+            Storage::disk(config('filesystems.media_disk'))->put($coverImagePath, (string) $image->encode(new JpegEncoder(quality: 90)));
         }
 
         try {
@@ -329,7 +327,7 @@ class BookController extends Controller
         } catch (\Throwable $e) {
             // Roll back the on-disk upload too — the DB transaction already rolled back the rows.
             if ($coverImagePath) {
-                Storage::disk('public')->delete($coverImagePath);
+                Storage::disk(config('filesystems.media_disk'))->delete($coverImagePath);
             }
             throw $e;
         }
@@ -424,16 +422,19 @@ class BookController extends Controller
             $image = Image::read($request->file('cover_image'));
             $image->cover(300, 450);
             $filename = time().'_'.Str::random(8).'.jpg';
-            $image->save(storage_path('app/public/book-covers/'.$filename));
-
             $newCoverImagePath = 'book-covers/'.$filename;
+
+            Storage::disk(config('filesystems.media_disk'))->put($newCoverImagePath, (string) $image->encode(new JpegEncoder(quality: 90)));
+
             $uploadedCoverImagePath = $newCoverImagePath;
             $coverImageProvided = true;
-            $oldCoverImagePathForCleanup = $book->cover_image;
+            // getRawOriginal(): cover_image resolves to a full URL via the model accessor,
+            // but cleanup below needs the bare disk key that was actually stored.
+            $oldCoverImagePathForCleanup = $book->getRawOriginal('cover_image');
         } elseif ($request->boolean('remove_cover_image')) {
             $newCoverImagePath = null;
             $coverImageProvided = true;
-            $oldCoverImagePathForCleanup = $book->cover_image;
+            $oldCoverImagePathForCleanup = $book->getRawOriginal('cover_image');
         } elseif ($request->exists('cover_image')) {
             $request->validate([
                 'cover_image' => ['nullable', 'string', 'max:255'],
@@ -551,7 +552,7 @@ class BookController extends Controller
             // Roll back the newly uploaded file — the DB transaction already rolled back the rows,
             // and the old cover (if any) was never touched.
             if ($uploadedCoverImagePath) {
-                Storage::disk('public')->delete($uploadedCoverImagePath);
+                Storage::disk(config('filesystems.media_disk'))->delete($uploadedCoverImagePath);
             }
             throw $e;
         }
@@ -559,7 +560,7 @@ class BookController extends Controller
         // Only clean up the previous cover after a successful commit, and only if it was a
         // locally-stored file — imported covers can point at external URLs we don't own.
         if ($oldCoverImagePathForCleanup && !str_starts_with($oldCoverImagePathForCleanup, 'http')) {
-            Storage::disk('public')->delete($oldCoverImagePathForCleanup);
+            Storage::disk(config('filesystems.media_disk'))->delete($oldCoverImagePathForCleanup);
         }
 
         // Module 7 — Activity Log: ghi 1 dòng log gộp cho toàn bộ trường đã đổi,

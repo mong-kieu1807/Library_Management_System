@@ -4,15 +4,32 @@ namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Database\Factories\UserFactory;
+use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use Illuminate\Support\Facades\Storage;
 use Laravel\Sanctum\HasApiTokens;
 
 class User extends Authenticatable
 {
     /** @use HasFactory<UserFactory> */
     use HasFactory, Notifiable, HasApiTokens;
+
+    /**
+     * avatar_url is stored as either a bare media-disk path ("avatars/x.jpg")
+     * or an already-absolute http(s) URL (back-compat: a URL passed straight
+     * through by an admin). Resolve the former against the configured media
+     * disk so API responses always carry a directly-loadable URL.
+     */
+    protected function avatarUrl(): Attribute
+    {
+        return Attribute::make(
+            get: fn (?string $value) => ($value && !str_starts_with($value, 'http'))
+                ? Storage::disk(config('filesystems.media_disk'))->url($value)
+                : $value,
+        );
+    }
 
     /**
      * The attributes that are mass assignable.

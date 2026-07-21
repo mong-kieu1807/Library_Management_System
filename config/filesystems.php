@@ -17,6 +17,22 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Media Disk (book covers, avatars)
+    |--------------------------------------------------------------------------
+    |
+    | Uploaded book covers and user avatars are written to this disk instead
+    | of the app-wide default, so the queue/cache/other filesystem usage is
+    | unaffected. Local dev keeps using "public" (served from storage/app/public
+    | via the storage:link symlink); production sets MEDIA_DISK=s3 pointing at
+    | a DigitalOcean Spaces bucket, since App Platform containers are ephemeral
+    | and don't persist local disk writes across deploys/restarts.
+    |
+    */
+
+    'media_disk' => env('MEDIA_DISK', 'public'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Filesystem Disks
     |--------------------------------------------------------------------------
     |
@@ -47,6 +63,9 @@ return [
             'report' => false,
         ],
 
+        // DigitalOcean Spaces is S3-compatible — reuse the s3 driver, pointed at
+        // the Spaces endpoint via AWS_ENDPOINT (e.g. https://sgp1.digitaloceanspaces.com)
+        // and AWS_URL for the public base URL (e.g. https://<bucket>.sgp1.digitaloceanspaces.com or a CDN alias).
         's3' => [
             'driver' => 's3',
             'key' => env('AWS_ACCESS_KEY_ID'),
@@ -56,6 +75,10 @@ return [
             'url' => env('AWS_URL'),
             'endpoint' => env('AWS_ENDPOINT'),
             'use_path_style_endpoint' => env('AWS_USE_PATH_STYLE_ENDPOINT', false),
+            // Uploads don't pass a visibility per-call, so this is what actually makes
+            // book covers/avatars publicly fetchable — without it Flysystem's S3 adapter
+            // defaults to private ACL and the URLs the app returns would 403 in the browser.
+            'visibility' => 'public',
             'throw' => false,
             'report' => false,
         ],

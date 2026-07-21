@@ -57,6 +57,77 @@ class ReservationController extends Controller
     }
 
     /**
+     * GET /private/v1/reservation/search-reader?keyword=
+     *
+     * Tìm độc giả theo tên, User ID hoặc mã thẻ thư viện — dùng để chọn độc giả
+     * khi tạo phiếu đặt trước (thay vì bắt admin phải biết chính xác User ID).
+     */
+    public function searchReader(Request $request)
+    {
+        $keyword = trim($request->query('keyword', ''));
+
+        if (mb_strlen($keyword) < 2) {
+            return response()->json([
+                'code'    => 422,
+                'message' => 'Vui lòng nhập ít nhất 2 ký tự để tìm kiếm.',
+            ], 422);
+        }
+
+        $readers = DB::table('users as u')
+            ->join('roles as r', 'r.role_id', '=', 'u.role_id')
+            ->leftJoin('library_cards as lc', 'lc.user_id', '=', 'u.user_id')
+            ->where('r.role_name', 'reader')
+            ->where(function ($q) use ($keyword) {
+                $q->where('u.full_name', 'LIKE', '%' . $keyword . '%')
+                  ->orWhere('lc.card_number', 'LIKE', '%' . $keyword . '%')
+                  ->orWhere('u.email', 'LIKE', '%' . $keyword . '%')
+                  ->orWhere('u.phone', 'LIKE', '%' . $keyword . '%');
+
+                if (ctype_digit($keyword)) {
+                    $q->orWhere('u.user_id', '=', (int) $keyword);
+                }
+            })
+            ->select([
+                'u.user_id',
+                'u.full_name',
+                'u.email',
+                'u.phone',
+                'lc.card_id',
+                'lc.card_number',
+                'lc.status as card_status',
+                'lc.expiry_date',
+            ])
+            ->orderBy('u.full_name')
+            ->limit(10)
+            ->get();
+
+        $today = now()->toDateString();
+
+        $results = $readers->map(function ($row) use ($today) {
+            $hasCard = !is_null($row->card_id);
+
+            return [
+                'user_id'      => $row->user_id,
+                'full_name'    => $row->full_name,
+                'email'        => $row->email,
+                'phone'        => $row->phone,
+                'library_card' => $hasCard ? [
+                    'card_id'     => $row->card_id,
+                    'card_number' => $row->card_number,
+                    'status'      => (int) $row->card_status,
+                    'expiry_date' => $row->expiry_date,
+                    'is_expired'  => $row->expiry_date < $today,
+                ] : null,
+            ];
+        });
+
+        return response()->json([
+            'code'    => 200,
+            'results' => ['objects' => $results],
+        ]);
+    }
+
+    /**
      * POST /private/v1/reservation/create
      *
      * Tạo phiếu đặt trước sách.

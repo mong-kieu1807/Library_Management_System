@@ -1,0 +1,50 @@
+worker_processes auto;
+daemon off;
+# Match php-fpm's pool user (www-data, the default in the official image) so
+# both processes see consistent ownership on /var/www/html regardless of the
+# exact permission bits COPY produced at build time.
+user www-data;
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    include mime.types;
+    default_type application/octet-stream;
+    sendfile on;
+    keepalive_timeout 65;
+
+    access_log /dev/stdout;
+    error_log /dev/stderr;
+
+    client_max_body_size 10m;
+    fastcgi_read_timeout 120s;
+
+    server {
+        # PORT is substituted by docker/entrypoint.sh at container start — DO App
+        # Platform injects it (default 8080); locally it falls back to 8080 too.
+        listen ${PORT};
+        server_name _;
+        root /var/www/html/public;
+        index index.php;
+
+        location / {
+            try_files $uri $uri/ /index.php?$query_string;
+        }
+
+        location = /favicon.ico { access_log off; log_not_found off; }
+        location = /robots.txt  { access_log off; log_not_found off; }
+
+        location ~ \.php$ {
+            fastcgi_pass 127.0.0.1:9000;
+            fastcgi_index index.php;
+            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+            include fastcgi_params;
+        }
+
+        location ~ /\.(?!well-known).* {
+            deny all;
+        }
+    }
+}

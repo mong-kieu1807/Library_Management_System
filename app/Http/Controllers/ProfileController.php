@@ -90,15 +90,14 @@ class ProfileController extends Controller
             'avatar' => 'required|image|mimes:jpeg,jpg,png|max:2048',
         ]);
 
-        $path      = $request->file('avatar')->store('avatars', 'public');
-        $avatarUrl = '/storage/' . $path;
+        $path = $request->file('avatar')->store('avatars', config('filesystems.media_disk'));
 
-        $user->avatar_url = $avatarUrl;
+        $user->avatar_url = $path;
         $user->save();
 
         return response()->json([
             'message'    => 'Cập nhật ảnh đại diện thành công.',
-            'avatar_url' => $avatarUrl,
+            'avatar_url' => $user->avatar_url,
         ]);
     }
 

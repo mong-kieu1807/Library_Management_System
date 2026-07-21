@@ -1,0 +1,76 @@
+# Local smoke-test for the production Dockerfile — NOT used for deployment.
+# DO App Platform builds the same Dockerfile directly from GitHub; this just lets
+# you catch build/runtime issues before pushing. Copy .env.example to .env first
+# (fill in APP_KEY via `php artisan key:generate --show`), then:
+#   docker compose up --build
+#   docker compose exec app php artisan migrate --force
+
+x-app-env: &app-env
+  env_file: ./.env
+  environment:
+    APP_ENV: local
+    APP_DEBUG: "true"
+    DB_CONNECTION: mysql
+    DB_HOST: mysql
+    DB_PORT: 3306
+    DB_DATABASE: library
+    DB_USERNAME: library
+    DB_PASSWORD: secret
+    MEDIA_DISK: public
+    QUEUE_CONNECTION: database
+    SESSION_DRIVER: database
+    CACHE_STORE: database
+    PORT: 8080
+
+services:
+  app:
+    build: .
+    <<: *app-env
+    ports:
+      - "8080:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    volumes:
+      - storage_app:/var/www/html/storage/app
+
+  queue:
+    build: .
+    <<: *app-env
+    command: ["php", "artisan", "queue:work", "--tries=3", "--max-time=3300", "--sleep=3"]
+    depends_on:
+      mysql:
+        condition: service_healthy
+    volumes:
+      - storage_app:/var/www/html/storage/app
+
+  scheduler:
+    build: .
+    <<: *app-env
+    command: ["php", "artisan", "schedule:work"]
+    depends_on:
+      mysql:
+        condition: service_healthy
+    volumes:
+      - storage_app:/var/www/html/storage/app
+
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_DATABASE: library
+      MYSQL_USER: library
+      MYSQL_PASSWORD: secret
+      MYSQL_ROOT_PASSWORD: root
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  mysql_data:
+  storage_app:

@@ -3,6 +3,10 @@
 
 .env
 .env.production
+# Filled-in copy of .do/app.yaml with real secrets — used locally with `doctl
+# apps create/update --spec`, never committed (the tracked .do/app.yaml keeps
+# REPLACE_ME placeholders instead).
+/.do/app.production.yaml
 .phpactor.json
 .phpunit.result.cache
 /.fleet
