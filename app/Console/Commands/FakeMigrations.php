@@ -19,6 +19,7 @@ class FakeMigrations extends Command
             '2026_06_18_122439_create_personal_access_tokens_table',
             '2026_06_19_000001_create_password_reset_tokens_table',
             '2026_06_19_100000_create_change_password_otps_table',
+            '2026_07_21_000000_create_admin_reader_email_otps_table',
             '2026_06_21_072739_add_is_active_to_authors_table',
             '2026_06_22_052455_add_google2fa_secret_to_users_table',
             '2026_06_22_052522_add_librarian_level_to_users_table',
