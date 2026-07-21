@@ -191,8 +191,7 @@ class UserController extends Controller
                 'avatar' => ['image', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
             ]);
 
-            $path = $request->file('avatar')->store('avatars', 'public');
-            $avatarUrl = '/storage/' . $path;
+            $avatarUrl = $request->file('avatar')->store('avatars', config('filesystems.media_disk'));
         } elseif ($request->exists('avatar')) {
             $request->validate([
                 'avatar' => ['nullable', 'string', 'max:255'],
@@ -329,10 +328,11 @@ class UserController extends Controller
                 'avatar' => ['image', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
             ]);
 
-            $path = $request->file('avatar')->store('avatars', 'public');
-            $newAvatarUrl = '/storage/' . $path;
+            $newAvatarUrl = $request->file('avatar')->store('avatars', config('filesystems.media_disk'));
             $avatarProvided = true;
-            $oldAvatarPathForCleanup = $user->avatar_url;
+            // getRawOriginal(): avatar_url resolves to a full URL via the model accessor,
+            // but cleanup below needs the bare disk key that was actually stored.
+            $oldAvatarPathForCleanup = $user->getRawOriginal('avatar_url');
         } elseif ($request->exists('avatar')) {
             $request->validate([
                 'avatar' => ['nullable', 'string', 'max:255'],
@@ -340,7 +340,7 @@ class UserController extends Controller
             $newAvatarUrl = $request->input('avatar');
             $avatarProvided = true;
             if ($newAvatarUrl === '' || $newAvatarUrl === null) {
-                $oldAvatarPathForCleanup = $user->avatar_url;
+                $oldAvatarPathForCleanup = $user->getRawOriginal('avatar_url');
             }
         }
 
@@ -394,9 +394,9 @@ class UserController extends Controller
 
         $user->save();
 
-        // Xóa file avatar cũ trên đĩa (chỉ khi lưu local qua /storage/avatars/, không đụng URL ngoài).
-        if ($oldAvatarPathForCleanup && str_starts_with($oldAvatarPathForCleanup, '/storage/avatars/')) {
-            Storage::disk('public')->delete(str_replace('/storage/', '', $oldAvatarPathForCleanup));
+        // Xóa file avatar cũ trên đĩa (chỉ khi là path do disk quản lý, không đụng URL ngoài).
+        if ($oldAvatarPathForCleanup && !str_starts_with($oldAvatarPathForCleanup, 'http')) {
+            Storage::disk(config('filesystems.media_disk'))->delete($oldAvatarPathForCleanup);
         }
 
         // Module 7 — Activity Log: chỉ log khi status thực sự đổi (khóa/mở khóa),

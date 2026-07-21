@@ -2,10 +2,27 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Storage;
 
 class Book extends Model
 {
+    /**
+     * cover_image is stored as either a bare media-disk path ("book-covers/x.jpg")
+     * or an already-absolute http(s) URL (ISBN import from Google Books). Resolve
+     * the former against the configured media disk so API responses always carry
+     * a directly-loadable URL, regardless of whether that disk is local or S3/Spaces.
+     */
+    protected function coverImage(): Attribute
+    {
+        return Attribute::make(
+            get: fn (?string $value) => ($value && !str_starts_with($value, 'http'))
+                ? Storage::disk(config('filesystems.media_disk'))->url($value)
+                : $value,
+        );
+    }
+
     public function publisher()
     {
         return $this->belongsTo(Publisher::class, 'publisher_id', 'publisher_id');
