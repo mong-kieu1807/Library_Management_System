@@ -86,8 +86,8 @@ class ReceiptService
 
         abort_if(!$borrow, 404, 'Phiếu mượn không tồn tại.');
 
-        // [2] Returned books — barcode + title + return_date + renewed_due_date
-        $returnedBooks = DB::table('borrow_details as bd')
+        // [2] All returned books in this borrow_transaction
+        $allReturnedBooks = DB::table('borrow_details as bd')
             ->join('book_copies as bc', 'bc.copy_id', '=', 'bd.copy_id')
             ->join('books as b', 'b.book_id', '=', 'bc.book_id')
             ->where('bd.borrow_id', $borrowId)
@@ -100,6 +100,19 @@ class ReceiptService
                 'bd.renewed_due_date',
             ])
             ->get();
+
+        abort_if($allReturnedBooks->isEmpty(), 404, 'Chưa có sách nào được trả trong phiếu mượn này.');
+
+        // Lấy danh sách copy_id từ request nếu có, hoặc lọc các sách được trả trong đợt trả mới nhất
+        $requestedCopyIds = request('copy_ids') ? array_map('intval', explode(',', request('copy_ids'))) : [];
+
+        if (!empty($requestedCopyIds)) {
+            $returnedBooks = $allReturnedBooks->whereIn('copy_id', $requestedCopyIds)->values();
+        } else {
+            // Đợt trả mới nhất (theo ngày return_date)
+            $latestDate = $allReturnedBooks->max('return_date');
+            $returnedBooks = $allReturnedBooks->where('return_date', $latestDate)->values();
+        }
 
         // [3] Overdue days per book + latest return date
         // Mỗi sách dùng hạn trả hiệu lực riêng (renewed_due_date nếu đã gia hạn),
@@ -118,22 +131,28 @@ class ReceiptService
 
         $returnDate = $latestReturnDate ? $latestReturnDate->format('d/m/Y') : today()->format('d/m/Y');
 
-        // [4] Fine summary — query all fines related to this borrow_id or copy_ids
-        $copyIds = $returnedBooks->pluck('copy_id')->toArray();
+        // [4] Fine summary — ONLY fines belonging to THIS borrow_id and THESE returned copy_ids
+        $sessionCopyIds = $returnedBooks->pluck('copy_id')->toArray();
 
         $fines = DB::table('fines')
-            ->where(function ($q) use ($borrowId, $copyIds) {
-                $q->where('borrow_id', $borrowId);
-                if (!empty($copyIds)) {
-                    $q->orWhereIn('copy_id', $copyIds);
-                }
-            })
-            ->get()
-            ->unique('fine_id');
+            ->where('borrow_id', $borrowId)
+            ->whereIn('copy_id', $sessionCopyIds)
+            ->get();
 
         $totalFine = (int) $fines->sum('amount');
 
-        // [5] Paid amount — SUM of payments for fines of this borrow
+        // Nếu DB chưa có bản ghi fines nhưng sách trong đợt này có số ngày quá hạn, tự động tính theo fine_per_day
+        if ($totalFine === 0) {
+            $totalOverdueDays = (int) $returnedBooks->sum('overdue_days');
+            if ($totalOverdueDays > 0) {
+                $finePerDay = (int) (DB::table('system_settings')
+                    ->where('config_key', 'fine_per_day')
+                    ->value('config_value') ?: 5000);
+                $totalFine = $totalOverdueDays * $finePerDay;
+            }
+        }
+
+        // [5] Paid amount — SUM of payments for fines of THIS return session
         $fineIds = $fines->pluck('fine_id')->filter()->toArray();
 
         $paidAmount = 0;
