@@ -19,6 +19,7 @@ RUN composer install \
 FROM php:8.2-fpm-alpine AS app
 
 RUN apk add --no-cache \
+        ca-certificates \
         nginx \
         supervisor \
         mariadb-client \
