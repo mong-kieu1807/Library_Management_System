@@ -3,6 +3,15 @@
 $envOrigins = (string) env('CORS_ALLOWED_ORIGINS', '');
 $allowedOrigins = array_values(array_filter(array_map('trim', explode(',', $envOrigins))));
 
+$defaultOrigins = [
+    'https://admin.libraryhub.dev',
+    'https://libraryhub.dev',
+];
+
+$finalOrigins = empty($allowedOrigins)
+    ? ['*']
+    : array_values(array_unique(array_merge($defaultOrigins, $allowedOrigins)));
+
 return [
 
     /*
@@ -16,11 +25,11 @@ return [
     |
     */
 
-    'paths' => ['api/*', 'v1/*', 'private/*', 'sanctum/csrf-cookie'],
+    'paths' => ['api/*', 'v1/*', 'private/*', 'sanctum/csrf-cookie', '*'],
 
     'allowed_methods' => ['*'],
 
-    'allowed_origins' => empty($allowedOrigins) ? ['*'] : $allowedOrigins,
+    'allowed_origins' => $finalOrigins,
 
     'allowed_origins_patterns' => [
         '#^https?://localhost(:[0-9]+)?$#',

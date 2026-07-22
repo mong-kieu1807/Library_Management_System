@@ -248,15 +248,27 @@ class BookController extends Controller
 
         $coverImagePath = null;
         if ($request->hasFile('cover_image')) {
-            $image = Image::read($request->file('cover_image'));
+            try {
+                $image = Image::read($request->file('cover_image'));
+                // crop và resize về kích thước cố định
+                $image->cover(300, 450);
 
-            // crop và resize về kích thước cố định
-            $image->cover(300, 450);
+                $filename = time().'_'.Str::random(8).'.jpg';
+                $coverImagePath = 'book-covers/'.$filename;
 
-            $filename = time().'_'.Str::random(8).'.jpg';
-            $coverImagePath = 'book-covers/'.$filename;
-
-            Storage::disk(config('filesystems.media_disk'))->put($coverImagePath, (string) $image->encode(new JpegEncoder(quality: 90)));
+                Storage::disk(config('filesystems.media_disk'))->put($coverImagePath, (string) $image->encode(new JpegEncoder(quality: 90)));
+            } catch (\Throwable $imgErr) {
+                try {
+                    $file = $request->file('cover_image');
+                    $filename = time().'_'.Str::random(8).'.'.$file->getClientOriginalExtension();
+                    $coverImagePath = 'book-covers/'.$filename;
+                    Storage::disk(config('filesystems.media_disk'))->putFileAs('book-covers', $file, $filename);
+                } catch (\Throwable $storageErr) {
+                    return response()->json([
+                        'message' => 'Không thể lưu ảnh bìa: ' . $storageErr->getMessage(),
+                    ], 500);
+                }
+            }
         }
 
         try {
@@ -329,7 +341,9 @@ class BookController extends Controller
             if ($coverImagePath) {
                 Storage::disk(config('filesystems.media_disk'))->delete($coverImagePath);
             }
-            throw $e;
+            return response()->json([
+                'message' => 'Lỗi hệ thống khi tạo sách: ' . $e->getMessage(),
+            ], 500);
         }
 
         return response()->json($book->load(['authors', 'categories', 'publisher', 'bookCopies']), 201);
