@@ -27,6 +27,7 @@ return [
         '#^https?://127\.0\.0\.1(:[0-9]+)?$#',
         '#^https://.*\.vercel\.app$#',
         '#^https://.*\.ondigitalocean\.app$#',
+        '#^https://([a-zA-Z0-9-]+\.)*libraryhub\.dev$#',
     ],
 
     'allowed_headers' => ['*'],
