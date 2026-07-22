@@ -56,11 +56,11 @@ class BookController extends Controller
                 continue;
             }
 
-            $info = $this->googleBooksService->findAuthorInfo($name);
-            if ($info === null) {
-                throw new AuthorNotFoundException(
-                    "Không tìm thấy tác giả \"{$name}\" trên Google Books. Vui lòng kiểm tra lại tên hoặc chọn tác giả có sẵn trong hệ thống."
-                );
+            $info = null;
+            try {
+                $info = $this->googleBooksService->findAuthorInfo($name);
+            } catch (\Throwable $t) {
+                $info = null;
             }
 
             $newAuthor = Author::firstOrCreate(
@@ -265,7 +265,7 @@ class BookController extends Controller
                 'title' => $validated['title'],
                 'isbn' => $validated['isbn'],
                 'publisher_id' => $validated['publisher_id'],
-                'author_id' => $authorIds[0],
+                'author_id' => $authorIds[0] ?? null,
 
                 'publish_date' => $validated['publish_date'] ?? null,
                 'publish_year' => $validated['publish_year'] ?? null,
