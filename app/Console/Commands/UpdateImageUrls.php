@@ -63,6 +63,9 @@ class UpdateImageUrls extends Command
             48 => 'sapiens-luoc-su-loai-nguoi.jpg',
             49 => 'vu-tru.jpg',
             50 => 'luoc-su-thoi-gian.jpg',
+            120051 => 'vua-nham-mat-vua-mo-cua-so.jpg',
+            120052 => 'ngoi-khoc-tren-cay.jpg',
+            210052 => 'co_gai_den_tu_hom_qua.jpg',
         ];
 
         $updated = 0;
