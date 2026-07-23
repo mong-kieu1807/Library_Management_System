@@ -11,14 +11,11 @@ use App\Models\BookEditHistory;
 use App\Models\Publisher;
 use App\Services\ActivityLogService;
 use App\Services\GoogleBooksService;
-use Intervention\Image\Encoders\JpegEncoder;
-use Intervention\Image\Laravel\Facades\Image;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
-use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 
 
@@ -246,17 +243,12 @@ class BookController extends Controller
 
         $createFirstCopy = $request->boolean('create_first_copy', true);
 
+        // Lưu file trực tiếp (không qua Intervention Image) — máy chạy dev hiện tại
+        // không có extension GD nên driver ảnh sẽ báo lỗi 500 (xem UserController::store
+        // đã sửa avatar theo cùng cách).
         $coverImagePath = null;
         if ($request->hasFile('cover_image')) {
-            $image = Image::read($request->file('cover_image'));
-
-            // crop và resize về kích thước cố định
-            $image->cover(300, 450);
-
-            $filename = time().'_'.Str::random(8).'.jpg';
-            $coverImagePath = 'book-covers/'.$filename;
-
-            Storage::disk(config('filesystems.media_disk'))->put($coverImagePath, (string) $image->encode(new JpegEncoder(quality: 90)));
+            $coverImagePath = $request->file('cover_image')->store('book-covers', config('filesystems.media_disk'));
         }
 
         try {
@@ -419,12 +411,7 @@ class BookController extends Controller
                 'cover_image' => ['image', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
             ]);
 
-            $image = Image::read($request->file('cover_image'));
-            $image->cover(300, 450);
-            $filename = time().'_'.Str::random(8).'.jpg';
-            $newCoverImagePath = 'book-covers/'.$filename;
-
-            Storage::disk(config('filesystems.media_disk'))->put($newCoverImagePath, (string) $image->encode(new JpegEncoder(quality: 90)));
+            $newCoverImagePath = $request->file('cover_image')->store('book-covers', config('filesystems.media_disk'));
 
             $uploadedCoverImagePath = $newCoverImagePath;
             $coverImageProvided = true;
