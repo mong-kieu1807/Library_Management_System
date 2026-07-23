@@ -69,6 +69,16 @@ RUN mkdir -p storage/framework/cache/data storage/framework/sessions storage/fra
     && chown -R www-data:www-data /var/www/html \
     && chmod -R ug+rwX storage bootstrap/cache
 
+# nginx.conf.template sets `user www-data;` so worker processes match php-fpm's user,
+# but the nginx apk package's own runtime dirs (client_body temp, pid, ...) are still
+# owned by its default `nginx` user/group — rechown so www-data can actually write
+# there (fixes "open() .../client_body/... Permission denied" on any request nginx
+# needs to buffer to disk, e.g. multipart file uploads with an image attached).
+RUN mkdir -p /var/lib/nginx/tmp/client_body /var/lib/nginx/tmp/proxy \
+             /var/lib/nginx/tmp/fastcgi /var/lib/nginx/tmp/uwsgi /var/lib/nginx/tmp/scgi \
+             /run/nginx \
+    && chown -R www-data:www-data /var/lib/nginx /run/nginx
+
 # DO App Platform sets PORT at runtime and expects the app to listen on it;
 # 8080 is the documented default and what we fall back to locally.
 EXPOSE 8080
