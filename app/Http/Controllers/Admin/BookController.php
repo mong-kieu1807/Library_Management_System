@@ -11,11 +11,14 @@ use App\Models\BookEditHistory;
 use App\Models\Publisher;
 use App\Services\ActivityLogService;
 use App\Services\GoogleBooksService;
+use Intervention\Image\Encoders\JpegEncoder;
+use Intervention\Image\Laravel\Facades\Image;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 
 
@@ -53,11 +56,11 @@ class BookController extends Controller
                 continue;
             }
 
-            $info = $this->googleBooksService->findAuthorInfo($name);
-            if ($info === null) {
-                throw new AuthorNotFoundException(
-                    "Không tìm thấy tác giả \"{$name}\" trên Google Books. Vui lòng kiểm tra lại tên hoặc chọn tác giả có sẵn trong hệ thống."
-                );
+            $info = null;
+            try {
+                $info = $this->googleBooksService->findAuthorInfo($name);
+            } catch (\Throwable $t) {
+                $info = null;
             }
 
             $newAuthor = Author::firstOrCreate(
@@ -243,12 +246,31 @@ class BookController extends Controller
 
         $createFirstCopy = $request->boolean('create_first_copy', true);
 
-        // Lưu file trực tiếp (không qua Intervention Image) — máy chạy dev hiện tại
-        // không có extension GD nên driver ảnh sẽ báo lỗi 500 (xem UserController::store
-        // đã sửa avatar theo cùng cách).
+        // Thử resize/crop về kích thước chuẩn qua Intervention Image (cần extension GD/Imagick);
+        // nếu máy không có driver ảnh (vd. máy dev hiện tại thiếu GD) thì tự rơi về lưu file gốc,
+        // không chặn thao tác thêm sách chỉ vì thiếu extension.
         $coverImagePath = null;
         if ($request->hasFile('cover_image')) {
-            $coverImagePath = $request->file('cover_image')->store('book-covers', config('filesystems.media_disk'));
+            try {
+                $image = Image::read($request->file('cover_image'));
+                $image->cover(300, 450);
+
+                $filename = time().'_'.Str::random(8).'.jpg';
+                $coverImagePath = 'book-covers/'.$filename;
+
+                Storage::disk(config('filesystems.media_disk'))->put($coverImagePath, (string) $image->encode(new JpegEncoder(quality: 90)));
+            } catch (\Throwable $imgErr) {
+                try {
+                    $file = $request->file('cover_image');
+                    $filename = time().'_'.Str::random(8).'.'.$file->getClientOriginalExtension();
+                    $coverImagePath = 'book-covers/'.$filename;
+                    Storage::disk(config('filesystems.media_disk'))->putFileAs('book-covers', $file, $filename);
+                } catch (\Throwable $storageErr) {
+                    return response()->json([
+                        'message' => 'Không thể lưu ảnh bìa: ' . $storageErr->getMessage(),
+                    ], 500);
+                }
+            }
         }
 
         try {
@@ -257,7 +279,7 @@ class BookController extends Controller
                 'title' => $validated['title'],
                 'isbn' => $validated['isbn'],
                 'publisher_id' => $validated['publisher_id'],
-                'author_id' => $authorIds[0],
+                'author_id' => $authorIds[0] ?? null,
 
                 'publish_date' => $validated['publish_date'] ?? null,
                 'publish_year' => $validated['publish_year'] ?? null,
@@ -321,7 +343,9 @@ class BookController extends Controller
             if ($coverImagePath) {
                 Storage::disk(config('filesystems.media_disk'))->delete($coverImagePath);
             }
-            throw $e;
+            return response()->json([
+                'message' => 'Lỗi hệ thống khi tạo sách: ' . $e->getMessage(),
+            ], 500);
         }
 
         return response()->json($book->load(['authors', 'categories', 'publisher', 'bookCopies']), 201);
@@ -411,7 +435,26 @@ class BookController extends Controller
                 'cover_image' => ['image', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
             ]);
 
-            $newCoverImagePath = $request->file('cover_image')->store('book-covers', config('filesystems.media_disk'));
+            try {
+                $image = Image::read($request->file('cover_image'));
+                $image->cover(300, 450);
+
+                $filename = time().'_'.Str::random(8).'.jpg';
+                $newCoverImagePath = 'book-covers/'.$filename;
+
+                Storage::disk(config('filesystems.media_disk'))->put($newCoverImagePath, (string) $image->encode(new JpegEncoder(quality: 90)));
+            } catch (\Throwable $imgErr) {
+                try {
+                    $file = $request->file('cover_image');
+                    $filename = time().'_'.Str::random(8).'.'.$file->getClientOriginalExtension();
+                    $newCoverImagePath = 'book-covers/'.$filename;
+                    Storage::disk(config('filesystems.media_disk'))->putFileAs('book-covers', $file, $filename);
+                } catch (\Throwable $storageErr) {
+                    return response()->json([
+                        'message' => 'Không thể lưu ảnh bìa: ' . $storageErr->getMessage(),
+                    ], 500);
+                }
+            }
 
             $uploadedCoverImagePath = $newCoverImagePath;
             $coverImageProvided = true;

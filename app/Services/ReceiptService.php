@@ -86,25 +86,33 @@ class ReceiptService
 
         abort_if(!$borrow, 404, 'Phiếu mượn không tồn tại.');
 
-        // [2] Returned books — barcode + title + overdue_days (no per-copy fee column)
-        $returnedBooks = DB::table('borrow_details as bd')
+        // [2] All returned books in this borrow_transaction
+        $allReturnedBooks = DB::table('borrow_details as bd')
             ->join('book_copies as bc', 'bc.copy_id', '=', 'bd.copy_id')
             ->join('books as b', 'b.book_id', '=', 'bc.book_id')
-            ->leftJoin('fines as f', function ($join) {
-                $join->on('f.borrow_id', '=', 'bd.borrow_id')
-                     ->on('f.copy_id', '=', 'bd.copy_id');
-            })
             ->where('bd.borrow_id', $borrowId)
             ->whereNotNull('bd.return_date')
             ->select([
+                'bd.copy_id',
                 'bc.barcode',
                 'b.title',
                 'bd.return_date',
                 'bd.renewed_due_date',
-                DB::raw('COALESCE(f.amount, 0) AS fine_amount'),
-                DB::raw('f.fine_id'),
             ])
             ->get();
+
+        abort_if($allReturnedBooks->isEmpty(), 404, 'Chưa có sách nào được trả trong phiếu mượn này.');
+
+        // Lấy danh sách copy_id từ request nếu có, hoặc lọc các sách được trả trong đợt trả mới nhất
+        $requestedCopyIds = request('copy_ids') ? array_map('intval', explode(',', request('copy_ids'))) : [];
+
+        if (!empty($requestedCopyIds)) {
+            $returnedBooks = $allReturnedBooks->whereIn('copy_id', $requestedCopyIds)->values();
+        } else {
+            // Đợt trả mới nhất (theo ngày return_date)
+            $latestDate = $allReturnedBooks->max('return_date');
+            $returnedBooks = $allReturnedBooks->where('return_date', $latestDate)->values();
+        }
 
         // [3] Overdue days per book + latest return date
         // Mỗi sách dùng hạn trả hiệu lực riêng (renewed_due_date nếu đã gia hạn),
@@ -116,7 +124,6 @@ class ReceiptService
             $due                = $book->renewed_due_date ? Carbon::parse($book->renewed_due_date)->startOfDay() : $fallbackDue;
             $retDate            = Carbon::parse($book->return_date)->startOfDay();
             $book->overdue_days = $retDate->gt($due) ? (int) $retDate->diffInDays($due, true) : 0;
-            $book->fine_amount  = (int) ($book->fine_amount ?? 0);
             if (!$latestReturnDate || $retDate->gt($latestReturnDate)) {
                 $latestReturnDate = $retDate;
             }
@@ -124,11 +131,29 @@ class ReceiptService
 
         $returnDate = $latestReturnDate ? $latestReturnDate->format('d/m/Y') : today()->format('d/m/Y');
 
-        // [4] Fine summary — total from fines table
-        $totalFine = (int) $returnedBooks->sum('fine_amount');
+        // [4] Fine summary — ONLY fines belonging to THIS borrow_id and THESE returned copy_ids
+        $sessionCopyIds = $returnedBooks->pluck('copy_id')->toArray();
 
-        // [5] Paid amount — SUM of payments for fines of this borrow
-        $fineIds = $returnedBooks->filter(fn($b) => $b->fine_id)->pluck('fine_id')->toArray();
+        $fines = DB::table('fines')
+            ->where('borrow_id', $borrowId)
+            ->whereIn('copy_id', $sessionCopyIds)
+            ->get();
+
+        $totalFine = (int) $fines->sum('amount');
+
+        // Nếu DB chưa có bản ghi fines nhưng sách trong đợt này có số ngày quá hạn, tự động tính theo fine_per_day
+        if ($totalFine === 0) {
+            $totalOverdueDays = (int) $returnedBooks->sum('overdue_days');
+            if ($totalOverdueDays > 0) {
+                $finePerDay = (int) (DB::table('system_settings')
+                    ->where('config_key', 'fine_per_day')
+                    ->value('config_value') ?: 5000);
+                $totalFine = $totalOverdueDays * $finePerDay;
+            }
+        }
+
+        // [5] Paid amount — SUM of payments for fines of THIS return session
+        $fineIds = $fines->pluck('fine_id')->filter()->toArray();
 
         $paidAmount = 0;
         if (!empty($fineIds)) {

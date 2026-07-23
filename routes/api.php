@@ -168,6 +168,8 @@ Route::middleware('auth:sanctum')->prefix('v1/me')->group(function () {
 Route::middleware(['auth:sanctum', 'role:admin,librarian'])->prefix('private/v1')->group(function () {
     Route::get('/users', [App\Http\Controllers\Admin\UserController::class, 'index']);
     Route::post('/users', [App\Http\Controllers\Admin\UserController::class, 'store']);
+    Route::post('/users/email-verification/request', [App\Http\Controllers\Admin\UserController::class, 'requestReaderEmailOtp']);
+    Route::post('/users/email-verification/verify', [App\Http\Controllers\Admin\UserController::class, 'verifyReaderEmailOtp']);
     Route::get('/users/{id}', [App\Http\Controllers\Admin\UserController::class, 'show']);
     Route::patch('/users/{id}', [App\Http\Controllers\Admin\UserController::class, 'update']);
     Route::delete('/users/{id}', [App\Http\Controllers\Admin\UserController::class, 'destroy']);
@@ -316,4 +318,3 @@ Route::middleware(['auth:sanctum', 'role:admin'])->prefix('private/v1')->group(f
     Route::delete('/backups/{filename}', [App\Http\Controllers\Admin\BackupController::class, 'destroy'])
         ->where('filename', '[\w\-\.]+\.sql');
 });
-

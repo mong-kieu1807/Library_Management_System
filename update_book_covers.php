@@ -19,8 +19,9 @@ echo " BẮT ĐẦU CẬP NHẬT ẢNH BÌA SÁCH TỪ GOOGLE BOOKS\n";
 echo "============================================================\n";
 
 foreach ($books as $book) {
-    // Nếu sách đã có ảnh online dạng http/https thì bỏ qua
-    if ($book->cover_image && (strpos($book->cover_image, 'http://') === 0 || strpos($book->cover_image, 'https://') === 0)) {
+    // Nếu sách đã có ảnh online hợp lệ (không phải localhost hoặc broken path) thì bỏ qua
+    $isLocalOrInvalid = str_contains($book->cover_image ?? '', 'localhost') || str_contains($book->cover_image ?? '', 'storage/..');
+    if ($book->cover_image && !$isLocalOrInvalid && (str_starts_with($book->cover_image, 'http://') || str_starts_with($book->cover_image, 'https://'))) {
         $skipCount++;
         continue;
     }

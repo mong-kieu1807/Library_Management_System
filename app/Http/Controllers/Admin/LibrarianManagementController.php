@@ -11,8 +11,13 @@ use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
 
+use App\Services\ActivityLogService;
+
 class LibrarianManagementController extends Controller
 {
+    public function __construct(private ActivityLogService $activityLogService)
+    {
+    }
     /**
      * Format a Librarian user model to front-end structure.
      */
@@ -125,6 +130,18 @@ class LibrarianManagementController extends Controller
             'status' => 1, // active by default
         ]);
 
+        $this->activityLogService->userCreated(
+            auth()->id() ?? 0,
+            $user->user_id,
+            [
+                'full_name'       => $user->full_name,
+                'email'           => $user->email,
+                'librarian_level' => $user->librarian_level,
+                'role'            => 'librarian',
+            ],
+            $request->ip()
+        );
+
         // Send email with temporary password
         $emailSent = false;
         $emailError = null;
@@ -185,6 +202,14 @@ class LibrarianManagementController extends Controller
             ], 422);
         }
 
+        $oldStatus = (int) $user->status;
+        $oldUserData = [
+            'full_name'       => $user->full_name,
+            'email'           => $user->email,
+            'librarian_level' => $user->librarian_level,
+            'phone'           => $user->phone,
+        ];
+
         if ($request->has('name')) $user->full_name = $request->name;
         if ($request->has('email')) $user->email = $request->email;
         if ($request->has('librarian_level')) $user->librarian_level = $request->librarian_level;
@@ -197,6 +222,19 @@ class LibrarianManagementController extends Controller
         }
 
         $user->save();
+
+        if ($request->has('status') && $oldStatus !== (int) $user->status) {
+            $method = (int) $user->status === 0 ? 'userLocked' : 'userUnlocked';
+            $this->activityLogService->{$method}(auth()->id() ?? 0, $user->user_id, ['status' => $oldStatus], ['status' => $user->status], $request->ip());
+        } else {
+            $newUserData = [
+                'full_name'       => $user->full_name,
+                'email'           => $user->email,
+                'librarian_level' => $user->librarian_level,
+                'phone'           => $user->phone,
+            ];
+            $this->activityLogService->userUpdated(auth()->id() ?? 0, $user->user_id, $oldUserData, $newUserData, $request->ip());
+        }
 
         return response()->json([
             'code' => 200,
@@ -225,6 +263,8 @@ class LibrarianManagementController extends Controller
         $user->password = Hash::make('12345678');
         $user->save();
 
+        $this->activityLogService->userUpdated(auth()->id() ?? 0, $user->user_id, ['password' => '***'], ['password' => 'default_12345678'], request()->ip());
+
         return response()->json([
             'code' => 200,
             'results' => [
@@ -249,7 +289,14 @@ class LibrarianManagementController extends Controller
             ], 404);
         }
 
+        $oldData = [
+            'full_name' => $user->full_name,
+            'email'     => $user->email,
+        ];
+
         $user->delete();
+
+        $this->activityLogService->userDeleted(auth()->id() ?? 0, (int) $id, $oldData, request()->ip());
 
         return response()->json([
             'code' => 200,
